@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aws-diagnostics-mcp"
-version = "0.3.0"
+version = "1.0.0"
 description = "Reusable AWS diagnostics tools for desktop and VPS MCP agents"
 requires-python = ">=3.11"
 readme = "README.md"

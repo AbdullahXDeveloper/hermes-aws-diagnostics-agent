@@ -40,6 +40,21 @@ the runtime session policy. Narrow resources/account scope further for your depl
 The source needs `sts:AssumeRole`; the diagnostics session explicitly denies it,
 `ssm:SendCommand` and every other action outside the diagnostic read list.
 
+For Mumbai-only access, create a managed policy using
+[`read-only-policy-ap-south-1.json`](../examples/read-only-policy-ap-south-1.json)
+and attach it to the `Diagnostics` role instead of the generic example. This includes
+the original read-only boundary plus an explicit deny outside `ap-south-1`.
+Only caller identity, instance-profile lookup and role-policy simulation are excepted
+from that region deny because identity/IAM checks may use global endpoints; the
+original allowlist still limits them to reads. EC2 region listing can still return
+region names, but diagnostic service calls to other regions are denied. This permits
+diagnosing any instance in Mumbai, not just one instance.
+Set `AWS_REGION=ap-south-1` on both local and VPS installations (or pass
+`--region ap-south-1` to setup/configure). Setting the default region alone does not
+enforce a boundary: the role policy must actually be deployed in AWS. Attach this
+policy to the role, not the source login user, which needs browser-login/AssumeRole
+permissions. This does not alter root access or other identities in the AWS account.
+
 AWS references: [session policies](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies.html),
 [EBS metrics and latency](https://docs.aws.amazon.com/ebs/latest/userguide/using_cloudwatch_ebs.html),
 [CloudWatch agent metrics](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/metrics-collected-by-CloudWatch-agent.html),

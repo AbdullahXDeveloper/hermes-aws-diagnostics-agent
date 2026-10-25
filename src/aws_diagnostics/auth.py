@@ -38,6 +38,20 @@ def error_result(error):
     if code in {"InvalidConfigError", "ConfigParseError", "MissingDependencyException"}:
         return {"status": "setup_required", "code": code,
                 "message": "Check AWS profile configuration and install project dependencies."}
+    if code in {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}:
+        message = error.response.get("Error", {}).get("Message", "").lower()
+        result = {"status": "error", "code": code, "operation": error.operation_name,
+                  "message": "AWS denied this operation. Check the diagnostics role policy, source AssumeRole permission and role trust; another login does not fix missing permissions."}
+        if "permissions boundary" in message:
+            result["policy_type"] = "permissions_boundary"
+            result["message"] = "AWS reports a permissions boundary restriction. An administrator must check the boundary on the principal making this operation, along with its permissions policy."
+        elif "service control policy" in message:
+            result["policy_type"] = "service_control_policy"
+            result["message"] = "AWS reports an organization service control policy restriction. Ask the organization administrator to review this operation."
+        return result
+    if code == "ValidationError" and error.operation_name == "AssumeRole":
+        return {"status": "setup_required", "code": code, "operation": "AssumeRole",
+                "message": "Check the role ARN, trust and requested role session duration. Duration must not exceed the role maximum; role chaining is limited to 3600 seconds."}
     return {"status": "error", "code": code,
             "message": "AWS check failed. Check permissions, region, or connectivity."}
 
@@ -48,6 +62,13 @@ class Connection:
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
         self.auth_mode = auth_mode or os.getenv("AWS_DIAGNOSTICS_AUTH_MODE", "auto")
         self.role_arn = role_arn or os.getenv("AWS_DIAGNOSTICS_ROLE_ARN", "")
+        duration = os.getenv("AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS", "3600")
+        try:
+            self.session_duration = int(duration)
+        except ValueError:
+            raise ValueError("AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS must be an integer from 900 to 43200") from None
+        if not 900 <= self.session_duration <= 43200:
+            raise ValueError("AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS must be an integer from 900 to 43200")
         if self.auth_mode not in {"auto", "console", "sso"}:
             raise ValueError("AWS_DIAGNOSTICS_AUTH_MODE must be auto, console, or sso")
         self.lock = threading.RLock()
@@ -65,7 +86,7 @@ class Connection:
                 r"arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role/[\w+=,.@/-]+", role):
             raise ClientError({"Error": {"Code": "DiagnosticsSecurityBoundary"}}, "AssumeRole")
         credentials = sts.assume_role(RoleArn=role, RoleSessionName="aws-diagnostics",
-            DurationSeconds=900, Policy=json.dumps(SESSION_POLICY, separators=(",", ":")))["Credentials"]
+            DurationSeconds=self.session_duration, Policy=json.dumps(SESSION_POLICY, separators=(",", ":")))["Credentials"]
         return boto3.Session(aws_access_key_id=credentials["AccessKeyId"],
             aws_secret_access_key=credentials["SecretAccessKey"],
             aws_session_token=credentials["SessionToken"], region_name=region or self.region)

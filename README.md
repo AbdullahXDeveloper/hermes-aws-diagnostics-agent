@@ -97,13 +97,25 @@ acceptance test.
 
 Diagnostics require a non-root source profile and an existing trusted role configured
 using `--role-arn` or `AWS_DIAGNOSTICS_ROLE_ARN`. Root diagnostics are blocked.
-The server assumes that role with a 15-minute STS session policy allowing only diagnostic
+The server assumes that role with a one-hour STS session by default, with a session policy allowing only diagnostic
 reads and explicitly denying all other actions. There is no fallback to the source
 credentials if role assumption fails. Your administrator must configure the role's
 permissions and trust first; the [example policy](examples/read-only-policy.json)
 is not deployed automatically. The source profile only calls STS identity/role assumption;
 its cached credentials are not stripped of their original permissions.
+Follow the [one-time IAM setup guide](docs/IAM_SETUP.md) for source login permissions,
+role trust and permissions-boundary troubleshooting. The agent assumes the role
+automatically; users do not need to switch roles manually in the Console.
 Passwords and AWS credentials stay in AWS's browser/CLI/SDK flows and local cache.
+
+Role credentials are renewed on each tool operation; their expiry does not require
+browser login while the source login remains valid. Console login credentials refresh
+automatically for up to 12 hours, subject to AWS session limits. To request a different
+role credential lifetime, set `AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS` in the MCP
+server environment (900–43200; default 3600). Longer requests require the role's AWS
+maximum session duration to permit them. Role chaining, including an assumed SSO role
+assuming the diagnostics role, is limited to one hour. See
+[session duration](docs/AUTHENTICATION.md#session-duration) for details.
 
 Set `app_checks=true` to inspect existing `CWAgent` disk/RAM/process telemetry tagged
 with the selected `InstanceId` dimension. Service health uses configured PID telemetry;
@@ -135,6 +147,7 @@ See [check details and example request](docs/DIAGNOSTIC_CHECKS.md).
 
 ## Development and distribution
 
+- [Purpose of every project file](docs/PROJECT_GUIDE.md)
 - [Run tests and build](docs/DEVELOPMENT.md)
 - [Installation, updates and release steps](docs/DISTRIBUTION.md)
 - [Changelog](CHANGELOG.md)

@@ -23,6 +23,24 @@ def test_expired_session_is_reconnect_but_denied_is_not():
     assert "secret" not in str(error_result(denied))
 
 
+def test_permissions_boundary_error_is_actionable_without_exposing_aws_message():
+    denied = ClientError({"Error": {"Code": "UnauthorizedOperation", "Message":
+        "private-principal secret: no permissions boundary allows this action"}}, "DescribeInstances")
+    result = error_result(denied)
+    assert result["status"] == "error"
+    assert result["operation"] == "DescribeInstances"
+    assert result["policy_type"] == "permissions_boundary"
+    assert "secret" not in str(result) and "private-principal" not in str(result)
+
+
+def test_role_duration_validation_points_to_setup_instead_of_relogin():
+    denied = ClientError({"Error": {"Code": "ValidationError", "Message": "private details"}}, "AssumeRole")
+    result = error_result(denied)
+    assert result["status"] == "setup_required"
+    assert "3600" in result["message"]
+    assert "private details" not in str(result)
+
+
 def test_active_session_does_not_launch_login(monkeypatch):
     connection = Connection()
     monkeypatch.setattr(connection, "identity", lambda: {"status": "connected"})

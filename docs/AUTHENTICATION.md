@@ -2,8 +2,8 @@
 
 ## One-time setup
 
-Requirements: Python 3.11+, AWS CLI v2.32+ and an existing AWS account. Personal/root
-and IAM Console login do not require IAM Identity Center. Company SSO remains supported.
+Requirements: Python 3.11+, AWS CLI v2.32+ and an existing AWS account. Non-root
+IAM Console login does not require IAM Identity Center. Company SSO remains supported.
 
 Diagnostics now require a non-root source profile plus `AWS_DIAGNOSTICS_ROLE_ARN`.
 Root browser login can complete, but diagnostic access is blocked. An administrator
@@ -24,10 +24,14 @@ SSO users also need permission to assume the configured diagnostics role.
    On Linux/VPS use `.venv/bin/python` instead of `.venv/Scripts/python.exe`.
 
 2. Install [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
-   For a **personal/root or IAM user**, no manual SSO profile setup is needed.
+   For an **IAM user**, no manual SSO profile setup is needed.
    The first `connect_aws` starts `aws login` and AWS CLI creates the named profile
-   after successful approval. Choose root or IAM login on AWS's browser page;
+   after successful approval. Choose the non-root IAM identity on AWS's browser page;
    passwords and MFA stay there. An existing browser session may be selectable.
+   Attach AWS's `SignInLocalDevelopmentAccess` managed policy to the source identity
+   for Console-to-CLI authorization. See [IAM setup](IAM_SETUP.md) for the source
+   permissions, role trust and permissions-boundary checks. Console EC2 access as
+   the source user is not required: the tool assumes the diagnostics role itself.
 
    For **company SSO only**, configure the profile once on the server host:
 
@@ -43,7 +47,7 @@ SSO users also need permission to assume the configured diagnostics role.
    it is an example for your admin to review, not an automatically deployed policy.
 
 3. Register the MCP server with your agent. From an installed package, run
-   `aws-diagnostics-mcp setup --no-login --config /actual/path/to/client-mcp.json`
+   `aws-diagnostics-mcp setup --no-login --role-arn arn:aws:iam::123456789012:role/Diagnostics --config /actual/path/to/client-mcp.json`
    using the client's actual JSON MCP config path. For other formats, adapt the
    generated command, args and environment. The examples use the installed
    `aws-diagnostics-mcp serve` entry point; use its absolute path if needed.
@@ -82,6 +86,34 @@ run `aws login --remote --profile diagnostics --region us-east-1` yourself in th
 VPS terminal, then ask the agent to check `connection_status`. Do not run both login
 flows concurrently. Never submit a password, MFA code, access key, or session token
 to `complete_aws_login`.
+
+## Session duration
+
+Browser login lifetime and diagnostic role credential lifetime are separate:
+
+- Console login credentials are refreshed by the AWS CLI/SDK for up to 12 hours,
+  subject to AWS limits. After the source login expires, browser approval is required
+  again. Increasing the role duration does not extend this source login lifetime.
+- Each diagnostic tool operation assumes the diagnostics role again using the source
+  profile. Temporary role credentials last one hour by default. Their expiry between
+  operations does not itself require browser approval. Credentials already issued to
+  an individual operation are not refreshed mid-operation.
+- Set `AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS` in the MCP server's environment to
+  request 900–43200 seconds. For example, `7200` requests two hours and `43200` requests
+  twelve hours. Restart the MCP server after changing this setting.
+- For requests above one hour, the administrator must first set the diagnostics
+  role's **Maximum session duration** in AWS IAM to at least the requested value.
+  AWS rejects requests above that configured maximum. Role chaining (including an
+  assumed SSO role assuming this role) has a one-hour limit regardless of the role's
+  configured maximum; use `3600` or less with those source profiles.
+
+The Console login flow does not support a days-long browser authorization. SSO
+session lifetime is controlled separately by the organization's administrator.
+This setting changes credential lifetime only; the diagnostic read-only session
+policy and root-identity rejection apply at every duration.
+
+AWS references: [Console login and refresh](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html),
+[AssumeRole duration and chaining limits](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html).
 
 ## Daily use
 

@@ -11,7 +11,7 @@ def website_target(url):
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username is not None or parts.password is not None or parts.fragment:
         raise ValueError("website_url must be http(s), without credentials or a fragment")
-    port = parts.port or (443 if parts.scheme == "https" else 80)
+    port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
     if not 1 <= port <= 65535:
         raise ValueError("website port must be from 1 to 65535")
     return parts.hostname, port, parts.scheme == "https"

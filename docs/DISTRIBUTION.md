@@ -7,19 +7,20 @@ The commands below work after the source/tag or release asset has been published
 
 ```sh
 pipx install "git+https://github.com/AbdullahXDeveloper/hermes-aws-diagnostics-agent.git@main"
-aws-diagnostics-mcp setup --no-login --config /actual/path/to/client-mcp.json
+aws-diagnostics-mcp setup --no-login --role-arn arn:aws:iam::123456789012:role/Diagnostics --config /actual/path/to/client-mcp.json
 ```
 
 Replace the config path with your client's actual path. For reproducible installs,
-use `@v0.3.0` instead of `@main` once that tag exists. On VPS add `--remote`.
+use `@v1.0.0` instead of `@main` once that tag exists. On VPS add `--remote`.
 Reload your agent and ask **Connect AWS**. For company SSO, configure the profile
-first. For terminal login during setup, omit `--no-login`.
+first. For terminal login during setup, omit `--no-login`. Replace the sample role
+ARN with the user's trusted diagnostics role; see [IAM setup](IAM_SETUP.md).
 
 Python 3.11+, pipx and Git are required for source installation. A downloaded
 release wheel needs no Git or PyPI publication:
 
 ```sh
-pipx install ./aws_diagnostics_mcp-0.3.0-py3-none-any.whl
+pipx install ./aws_diagnostics_mcp-1.0.0-py3-none-any.whl
 ```
 
 From a cloned or extracted source checkout, use `pipx install .`.
@@ -66,7 +67,7 @@ Git requests it. For a new empty remote repository:
 
 ```sh
 git add .github .gitignore src/aws_diagnostics tests docs examples pyproject.toml MANIFEST.in README.md CHANGELOG.md LICENSE
-git commit -m "Prepare AWS diagnostics MCP 0.3.0"
+git commit -m "Prepare AWS diagnostics MCP 1.0.0"
 git push -u origin main
 ```
 
@@ -84,7 +85,7 @@ with GitHub's upload UI; include the hidden `.github` and `.gitignore` entries.
 3. Inspect archive members for local config, reports, credentials and caches.
 4. Push reviewed source. CI tests Windows/Linux on Python 3.11/3.12 and uploads
    build artifacts. It does not publish releases or contact AWS.
-5. Once CI passes, create tag `v0.3.0` and a GitHub release with its wheel/sdist.
+5. Once CI passes, create tag `v1.0.0` and a GitHub release with its wheel/sdist.
    Update the version for later releases; never reuse an existing release version.
 6. Verify the published GitHub install URL, then record the Hermes before/after
    demo. Local tests do not establish real-agent integration.

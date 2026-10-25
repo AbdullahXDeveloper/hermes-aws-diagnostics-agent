@@ -78,6 +78,8 @@ work and selects the target instance.
    and report `security_setup_required`; do not create IAM resources or weaken
    the boundary as part of installation. The example read policy is for the
    account administrator to deploy.
+   Follow [one-time IAM setup](IAM_SETUP.md) when the user explicitly requests IAM
+   provisioning. Normal installation alone does not authorize creating IAM resources.
 
    For other config formats, run `aws-diagnostics-mcp configure` and translate
    the returned command, arguments and environment into the client's format.
@@ -96,6 +98,8 @@ work and selects the target instance.
    prefer private input or the user's local `aws login --remote` terminal flow.
    A `security_setup_required` response needs the non-root profile/role configuration,
    not another browser login. Role trust and `sts:AssumeRole` permission must be in place.
+   IAM Console login also requires `SignInLocalDevelopmentAccess` on the source
+   identity. Check existing permissions boundaries if AWS reports a boundary denial.
 6. For a requested diagnosis, after approval, check `connection_status`, discover instances in the user's
    selected region and ask them to select an instance. Call `diagnose_instance`
    with the returned ID and region. If login expired, resume a pending diagnosis

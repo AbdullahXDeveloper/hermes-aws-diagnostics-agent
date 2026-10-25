@@ -2,6 +2,13 @@
 
 ## 1.0.0
 
+- Align package metadata and release instructions at 1.0.0, document non-root
+  browser-login/IAM provisioning, and report boundary and role-session setup errors
+  with actionable guidance without returning raw AWS error messages.
+- Reject website port zero instead of silently probing the default port.
+- Default diagnostic role credentials to one hour, configurable from 15 minutes to
+  12 hours with `AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS`, subject to AWS role and
+  chaining limits. Document source-login refresh separately from role duration.
 - Require a non-root source profile and diagnostics role. Assume a short-lived STS
   session with an explicit deny for every operation outside diagnostic reads;
   add `--role-arn` to setup/configure. Existing root-only configurations need migration.

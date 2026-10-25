@@ -46,7 +46,11 @@ def test_security_boundary_fails_closed(monkeypatch, principal, role):
     base.client.return_value.assume_role.assert_not_called()
 
 
-def test_only_restricted_role_credentials_reach_diagnostic_session(monkeypatch):
+@pytest.mark.parametrize("duration,expected", [(None, 3600), ("900", 900), ("7200", 7200), ("43200", 43200)])
+def test_only_restricted_role_credentials_reach_diagnostic_session(monkeypatch, duration, expected):
+    monkeypatch.delenv("AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS", raising=False)
+    if duration is not None:
+        monkeypatch.setenv("AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS", duration)
     monkeypatch.setenv("AWS_DIAGNOSTICS_ROLE_ARN", "arn:aws:iam::123456789012:role/Diagnostics")
     base = Mock()
     sts = base.client.return_value
@@ -58,6 +62,7 @@ def test_only_restricted_role_credentials_reach_diagnostic_session(monkeypatch):
     factory = Mock()
     monkeypatch.setattr("aws_diagnostics.auth.boto3.Session", factory)
     connection.session("us-west-2")
+    assert sts.assume_role.call_args.kwargs["DurationSeconds"] == expected
     assert json.loads(sts.assume_role.call_args.kwargs["Policy"]) == SESSION_POLICY
     deny = next(s for s in SESSION_POLICY["Statement"] if s["Effect"] == "Deny")
     assert deny["NotAction"] == READ_ACTIONS
@@ -65,6 +70,21 @@ def test_only_restricted_role_credentials_reach_diagnostic_session(monkeypatch):
     assert "sts:AssumeRole" not in READ_ACTIONS
     assert factory.call_args.kwargs["aws_access_key_id"] == "restricted-id"
     assert factory.call_args.kwargs["region_name"] == "us-west-2"
+
+    # Later calls obtain another restricted session without starting browser login.
+    sts.assume_role.return_value["Credentials"]["AccessKeyId"] = "renewed-restricted-id"
+    connection.session("us-west-2")
+    assert sts.assume_role.call_count == 2
+    assert factory.call_args.kwargs["aws_access_key_id"] == "renewed-restricted-id"
+    assert json.loads(sts.assume_role.call_args.kwargs["Policy"]) == SESSION_POLICY
+    assert connection.process is None
+
+
+@pytest.mark.parametrize("duration", ["", "invalid", "3600.5", "899", "43201"])
+def test_invalid_role_session_duration_rejected(monkeypatch, duration):
+    monkeypatch.setenv("AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS", duration)
+    with pytest.raises(ValueError, match="AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS"):
+        Connection()
 
 
 def test_failed_assume_role_never_falls_back(monkeypatch):
@@ -175,7 +195,8 @@ def test_tls_failure_is_separate_from_successful_tcp(monkeypatch):
 
 
 @pytest.mark.parametrize("options", [{"app_checks": False, "log_group": "app", "log_stream": "stream"},
-    {"app_checks": True, "log_group": "app"}, {"website_url": "file:///test"}])
+    {"app_checks": True, "log_group": "app"}, {"website_url": "file:///test"},
+    {"website_url": "https://example.com:0"}])
 def test_invalid_optional_checks_never_contact_aws(options):
     connection = Mock()
     assert Diagnostics(connection).diagnose(ID, **options)["status"] == "invalid_input"
