@@ -74,9 +74,12 @@ def test_diagnosis_reports_evidence_and_permission_gaps():
         s.add_response("describe_instance_information", {"InstanceInformationList": []},
                        {"Filters": [{"Key": "InstanceIds", "Values": [ID]}]})
         c.add_response("get_metric_statistics", {"Datapoints": [{"Timestamp": datetime.now(timezone.utc), "Average": 95.0}]})
+        for _ in range(4):
+            c.add_response("get_metric_statistics", {"Datapoints": []})
         result = Diagnostics(connection).diagnose(ID)
         assert result["status"] == "partial"
-        assert len(result["findings"]) == 3
+        assert len(result["findings"]) == 4
+        assert all(f["confidence"] and "missing_checks" in f for f in result["findings"])
         assert result["unavailable_checks"][0]["check"] == "security_groups"
         assert result["changes_made"] is False
         for stub in (e, s, c):
@@ -97,7 +100,8 @@ def test_expired_initial_request_is_saved_and_resumed(monkeypatch):
     result = server.diagnose_instance(ID, "us-east-1", "web down")
     request_id = result["request_id"]
     assert server.resume_diagnosis(request_id)["status"] == "ok"
-    assert diagnose.call_args.args == (ID, "us-east-1", "web down", False, None, "unknown", 22, None)
+    assert diagnose.call_args.args == (ID, "us-east-1", "web down", False, None, "unknown", 22, None,
+                                      False, None, None, None)
     assert server.resume_diagnosis(request_id)["status"] == "not_found"
 
 
@@ -155,8 +159,11 @@ def test_main_route_table_fallback_and_no_cpu_data():
         e.add_response("describe_route_tables", {"RouteTables": [{"RouteTableId": "rtb-12345678"}]},
                        {"Filters": [{"Name": "vpc-id", "Values": ["vpc-12345678"]},
                                     {"Name": "association.main", "Values": ["true"]}]})
+        e.add_response("describe_internet_gateways", {"InternetGateways": []})
         s.add_client_error("describe_instance_information", "ExpiredTokenException")
         c.add_response("get_metric_statistics", {"Datapoints": []})
+        for _ in range(4):
+            c.add_response("get_metric_statistics", {"Datapoints": []})
         result = Diagnostics(connection).diagnose(ID, issue="SSH unavailable", source_ip="203.0.113.9", connection_path="public")
         assert result["reconnect_required"] is True
         assert result["ssh_analysis"]["status"] == "blocked"

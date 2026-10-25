@@ -6,6 +6,7 @@
       "env": {
         "AWS_DIAGNOSTICS_AUTH_MODE": "auto",
         "AWS_DIAGNOSTICS_PROFILE": "diagnostics",
+        "AWS_DIAGNOSTICS_ROLE_ARN": "arn:aws:iam::123456789012:role/Diagnostics",
         "AWS_REGION": "us-east-1"
       }
     }

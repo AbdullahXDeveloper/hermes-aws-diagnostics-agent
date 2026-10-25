@@ -43,6 +43,14 @@ def test_setup_reuses_cli_and_config_and_backs_up_upgrade(ready, tmp_path, capsy
     ready[1].assert_not_called()
 
 
+def test_role_setting_reaches_mcp_configuration_and_login(ready, capsys):
+    role = "arn:aws:iam::123456789012:role/Diagnostics"
+    assert cli.main(["setup", "--role-arn", role]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["configuration"]["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_ROLE_ARN"] == role
+    assert ready[1].call_args.kwargs == {"role_arn": role}
+
+
 def test_setup_installs_and_rechecks_before_configuration(ready, monkeypatch, capsys):
     monkeypatch.setattr(cli, "doctor", Mock(side_effect=[{"aws_cli": {"status": "missing"}},
                         {"aws_cli": {"status": "ok", "path": "/test/aws"}}]))

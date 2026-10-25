@@ -72,6 +72,13 @@ work and selects the target instance.
    inspect conflicting settings before replacing them. Other JSON entries are
    preserved and an existing changed config is backed up.
 
+   Add `--role-arn` with the user's existing trusted diagnostics role ARN when
+   available. Diagnostics require a non-root source profile and restricted STS
+   role session. If the role is not provisioned yet, finish local installation
+   and report `security_setup_required`; do not create IAM resources or weaken
+   the boundary as part of installation. The example read policy is for the
+   account administrator to deploy.
+
    For other config formats, run `aws-diagnostics-mcp configure` and translate
    the returned command, arguments and environment into the client's format.
    Run `setup --no-login` first if AWS CLI is missing. Preserve the
@@ -87,6 +94,8 @@ work and selects the target instance.
    Never ask for passwords, MFA codes, access keys or session tokens in chat.
    Remote Console login uses a distinct, sensitive browser authorization code;
    prefer private input or the user's local `aws login --remote` terminal flow.
+   A `security_setup_required` response needs the non-root profile/role configuration,
+   not another browser login. Role trust and `sts:AssumeRole` permission must be in place.
 6. For a requested diagnosis, after approval, check `connection_status`, discover instances in the user's
    selected region and ask them to select an instance. Call `diagnose_instance`
    with the returned ID and region. If login expired, resume a pending diagnosis
@@ -97,6 +106,9 @@ Enable SSH analysis only for an SSH connectivity question. Ask for the relevant
 source IPv4/path only then. Do not assume the agent host IP is the user's SSH IP.
 
 Report findings with their evidence and distinguish unknown/missing data from
-healthy checks. This tool cannot change AWS resources or inspect OS processes/logs.
-Read-only IAM permissions must be enforced in AWS; the example policy is not
-automatically deployed. See [authentication and scope](AUTHENTICATION.md).
+healthy checks. Optional `app_checks` reads existing CWAgent metrics and selected
+CloudWatch log streams; it does not run host commands. Optional `website_url`
+checks public DNS/TCP/TLS from the server; source-specific website rule analysis
+also needs the relevant source IPv4/path. See [diagnostic checks](DIAGNOSTIC_CHECKS.md).
+Diagnostic credentials use an AWS-enforced read-only STS session policy; the
+role's permissions/trust are not automatically deployed. See [authentication and scope](AUTHENTICATION.md).

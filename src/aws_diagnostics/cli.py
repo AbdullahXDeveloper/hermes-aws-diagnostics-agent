@@ -14,11 +14,13 @@ import tempfile
 from .bootstrap import find_aws, install_aws, login
 
 
-def configuration(profile="diagnostics", region="us-east-1", auth_mode="auto", remote=False):
+def configuration(profile="diagnostics", region="us-east-1", auth_mode="auto", remote=False, role_arn=None):
     env = {"AWS_DIAGNOSTICS_PROFILE": profile, "AWS_REGION": region,
            "AWS_DIAGNOSTICS_AUTH_MODE": auth_mode}
     if remote:
         env["AWS_DIAGNOSTICS_REMOTE"] = "true"
+    if role_arn:
+        env["AWS_DIAGNOSTICS_ROLE_ARN"] = role_arn
     # Resolve the package's own environment, not whichever python happens to be on PATH.
     return {"mcpServers": {"aws-diagnostics": {
         "command": str(Path(sys.executable).absolute()),
@@ -98,6 +100,7 @@ def main(argv=None):
         command.add_argument("--region", default="us-east-1")
         command.add_argument("--auth-mode", choices=["auto", "console", "sso"], default="auto")
         command.add_argument("--remote", action="store_true", help="Use VPS/cross-device Console login.")
+        command.add_argument("--role-arn", help="Existing diagnostics role to assume with a restricted session policy.")
         command.add_argument("--replace", action="store_true", help="Replace an existing aws-diagnostics entry (backup created).")
     setup.add_argument("--no-login", action="store_true", help="Prepare installation/config only; log in from the agent later.")
     setup.add_argument("--no-install", action="store_true", help="Fail if AWS CLI needs installation or upgrade.")
@@ -113,7 +116,7 @@ def main(argv=None):
     try:
         if args.command == "setup":
             return run_setup(args)
-        result = configuration(args.profile, args.region, args.auth_mode, args.remote)
+        result = configuration(args.profile, args.region, args.auth_mode, args.remote, args.role_arn)
         if args.config:
             result = write_configuration(args.config, result, args.replace)
         print(json.dumps(result, indent=2))
@@ -125,7 +128,7 @@ def main(argv=None):
 
 def run_setup(args):
     # Check config conflicts before downloading or installing anything.
-    generated = configuration(args.profile, args.region, args.auth_mode, args.remote)
+    generated = configuration(args.profile, args.region, args.auth_mode, args.remote, args.role_arn)
     replace = args.replace
     if args.config and args.config.is_symlink():
         raise ValueError("Refusing to edit a symlink. Use the actual config file path.")
@@ -158,7 +161,8 @@ def run_setup(args):
     result["login"] = {"status": "deferred", "message": "Reload your agent and ask Connect AWS."}
     if not args.no_login:
         try:
-            result["login"] = login(executable, args.profile, args.region, args.auth_mode, args.remote)
+            role_options = {"role_arn": args.role_arn} if args.role_arn else {}
+            result["login"] = login(executable, args.profile, args.region, args.auth_mode, args.remote, **role_options)
         except (OSError, subprocess.TimeoutExpired):
             result["login"] = {"status": "login_failed", "message": "Retry Connect AWS from your agent."}
         if result["login"]["status"] != "connected":

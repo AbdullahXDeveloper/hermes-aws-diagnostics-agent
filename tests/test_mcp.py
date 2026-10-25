@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import os
 import pytest
 
 from mcp import ClientSession, StdioServerParameters
@@ -10,7 +11,8 @@ from mcp.client.stdio import stdio_client
 def test_real_stdio_handshake_and_tool_call(arguments):
     async def run():
         parameters = StdioServerParameters(command=sys.executable,
-            args=arguments, env={"AWS_DIAGNOSTICS_PROFILE": "nonexistent-test-profile"})
+            args=arguments, env={"AWS_DIAGNOSTICS_PROFILE": "nonexistent-test-profile",
+                                 "PYTHONPATH": os.pathsep.join(sys.path)})
         async with stdio_client(parameters) as (reader, writer):
             async with ClientSession(reader, writer) as session:
                 await session.initialize()

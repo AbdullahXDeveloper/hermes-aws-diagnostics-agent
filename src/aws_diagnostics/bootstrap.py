@@ -65,10 +65,10 @@ def install_aws():
     return executable
 
 
-def login(executable, profile, region, auth_mode, remote):
+def login(executable, profile, region, auth_mode, remote, role_arn=None):
     """Keep login in the foreground so exiting setup cannot cancel browser approval."""
     from .auth import Connection
-    connection = Connection(profile=profile, region=region, auth_mode=auth_mode)
+    connection = Connection(profile=profile, region=region, auth_mode=auth_mode, role_arn=role_arn)
     try:
         current = connection.identity()
         if current["status"] == "connected":
@@ -86,6 +86,7 @@ def login(executable, profile, region, auth_mode, remote):
                                 env={**os.environ, "AWS_CLI_AUTO_PROMPT": "off", "AWS_PAGER": ""})
         if result.returncode:
             return {"status": "login_failed", "message": "Retry Connect AWS from your agent."}
-        return {"status": connection.identity()["status"]}
+        verified = connection.identity()
+        return {"status": "connected"} if verified["status"] == "connected" else verified
     finally:
         connection.close()

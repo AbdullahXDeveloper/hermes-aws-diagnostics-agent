@@ -6,8 +6,8 @@ can use the same stdio server on a desktop or VPS.
 
 **Connect AWS → discover instances → select an instance → diagnose.**
 
-The tool reads instance health, CPU metrics, security groups, public IP,
-route tables, network ACLs and SSM connectivity. The agent explains findings
+The tool reads instance health, CPU/credit/network metrics, EBS latency, security groups,
+public IP, route tables, gateway attachments, network ACLs and SSM configuration. The agent explains findings
 using the returned evidence. Normal diagnosis needs no SSH login, key or
 source IP. SSH configuration analysis is optional for SSH connectivity issues.
 
@@ -36,7 +36,7 @@ For a client using JSON with an `mcpServers` object, replace the example path
 below with your client's actual MCP configuration file:
 
 ```sh
-aws-diagnostics-mcp setup --no-login --config /actual/path/to/client-mcp.json
+aws-diagnostics-mcp setup --no-login --role-arn arn:aws:iam::123456789012:role/Diagnostics --config /actual/path/to/client-mcp.json
 ```
 
 Setup checks AWS CLI v2.32+, installs it for the current user if needed using
@@ -95,16 +95,43 @@ acceptance test.
 
 ## Access and scope
 
-Tool operations read AWS data and do not modify infrastructure. Enforce access
-with a dedicated read-only IAM identity/role; the
-[example permissions policy](examples/read-only-policy.json) is not deployed
-automatically. Root login is supported but its underlying permissions are broad.
+Diagnostics require a non-root source profile and an existing trusted role configured
+using `--role-arn` or `AWS_DIAGNOSTICS_ROLE_ARN`. Root diagnostics are blocked.
+The server assumes that role with a 15-minute STS session policy allowing only diagnostic
+reads and explicitly denying all other actions. There is no fallback to the source
+credentials if role assumption fails. Your administrator must configure the role's
+permissions and trust first; the [example policy](examples/read-only-policy.json)
+is not deployed automatically. The source profile only calls STS identity/role assumption;
+its cached credentials are not stripped of their original permissions.
 Passwords and AWS credentials stay in AWS's browser/CLI/SDK flows and local cache.
 
-No OS processes, disk usage or application logs are inspected. SSH analysis
+Set `app_checks=true` to inspect existing `CWAgent` disk/RAM/process telemetry tagged
+with the selected `InstanceId` dimension. Service health uses configured PID telemetry;
+live service manager state remains unknown. Optionally supply exact `log_group` and
+`log_stream` to read the latest bounded sample (at most 100 events over 30 minutes).
+Logs may contain sensitive information; the caller selects a stream belonging to the
+intended instance. No host commands run, and no agents or log collection are installed.
+
+Set `website_url` to check public DNS, the website's TCP port and HTTPS certificate/TLS
+from the diagnostics server. No HTTP request is sent. Private/reserved DNS answers are
+not probed. If DNS identifies the selected instance IP, source-specific port configuration
+is also analyzed; supply `source_ip`, `connection_path` and `client_port` for that path.
+CDN/load balancer association and application responses remain unknown.
+
+Offline SSM reports include instance-profile lookup, role policy simulation and endpoint
+inventory/security groups. Agent runtime, live authorization and complete endpoint
+reachability remain unknown without host evidence. Missing instance profiles or VPC
+endpoints alone do not establish the root cause (other credential/egress modes exist).
+
+Each finding includes evidence, confidence and missing checks. Missing/stale telemetry
+and access failures are reported as gaps. EBS latency uses matching five-minute sums
+of total I/O time divided by operation count; zero-operation periods have no latency value.
+
+SSH analysis
 checks IPv4 configuration, not end-to-end reachability; it does not log into an
 instance. Missing context/permissions produce incomplete or unknown results.
 See [diagnostic scope](docs/AUTHENTICATION.md#scope-and-security).
+See [check details and example request](docs/DIAGNOSTIC_CHECKS.md).
 
 ## Development and distribution
 

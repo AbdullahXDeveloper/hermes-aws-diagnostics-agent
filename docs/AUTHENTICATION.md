@@ -5,6 +5,15 @@
 Requirements: Python 3.11+, AWS CLI v2.32+ and an existing AWS account. Personal/root
 and IAM Console login do not require IAM Identity Center. Company SSO remains supported.
 
+Diagnostics now require a non-root source profile plus `AWS_DIAGNOSTICS_ROLE_ARN`.
+Root browser login can complete, but diagnostic access is blocked. An administrator
+must create a diagnostics role with the example read permissions, trust the source
+IAM principal, and allow that principal `sts:AssumeRole` on the role. Pass the role
+to setup/configure with `--role-arn arn:aws:iam::123456789012:role/Diagnostics`.
+The server attaches an explicit-deny read-only session policy on every role assumption;
+it never uses unrestricted source credentials for diagnostic service calls. Existing
+SSO users also need permission to assume the configured diagnostics role.
+
 1. Install project dependencies:
 
    ```powershell
@@ -109,7 +118,7 @@ ACL return checks require the client's source port, not the server's SSH port.
 Missing permissions/context, source-group or prefix-list references, multiple ENIs,
 and private-path ACL applicability are reported as unknown. Public IP is not required
 for private connectivity. IPv6 analysis is not supported yet. This is configuration
-analysis only: no TCP probes, SSH login, gateway attachment verification, OS firewall,
+analysis only: no SSH TCP probes, SSH login, OS firewall,
 sshd, key/username checks, or end-to-end reachability claim. A result of
 `no_blocker_found` only applies to the evaluated configuration checks.
 
@@ -123,10 +132,12 @@ Rule semantics: [security groups](https://docs.aws.amazon.com/vpc/latest/usergui
   session expires, another browser approval is required. Setup is one-time;
   permanent login is not promised. The SDK's CRT dependency is included for Console
   credential refresh. AWS CLI stores Console credentials in its login cache.
-- Root login is supported without creating a dedicated IAM role. The diagnostics
-  operations remain read-only, but root credentials have full underlying account
-  access. A dedicated read-only IAM identity/role is optional and provides an AWS
-  enforcement boundary. Authentication writes the local AWS profile/cache only.
+- Root diagnostic sessions are blocked. A non-root profile and configured diagnostics
+  role are required. STS issues credentials with the intersection of the role permissions
+  and diagnostic session policy, including an explicit deny outside the read allowlist.
+  The source credentials remain in the AWS cache with their original permissions;
+  use a source profile limited to assuming the diagnostics role. No role or IAM policy
+  is automatically created or attached. Authentication writes the local profile/cache.
 - One user/profile per stdio process. Use separate OS users and private AWS config
   and cache directories for different people. This is not a hosted multi-tenant
   service; do not expose stdio through an unauthenticated HTTP wrapper.
@@ -134,9 +145,12 @@ Rule semantics: [security groups](https://docs.aws.amazon.com/vpc/latest/usergui
   `list_regions` returns enabled regions. Additional accounts/roles require their
   own configured profiles/server registrations. An account-picker portal is not
   part of this version.
-- Tools never execute shell commands on instances or mutate AWS. SSM connectivity
-  is inspected, but OS/application logs and process-level diagnostics are not yet
-  collected. Missing permission/data is reported as incomplete evidence.
+- Tools never execute shell commands on instances or mutate infrastructure. Optional
+  `app_checks` reads existing CWAgent disk/RAM/PID telemetry and explicitly selected
+  CloudWatch log streams. It cannot inspect unconfigured services or offline agent
+  runtime. `website_url` opts into public DNS/TCP/TLS probes from the diagnostics host;
+  these do not test the user's path or application response. Missing permission/data
+  is reported as incomplete evidence. Gateway attachment inventory is collected.
 - Network rules alone cannot establish end-to-end reachability, and high CPU alone
   cannot establish root cause. No findings does not mean a healthy application.
 - IAM permissions remain the enforcement boundary even if a client is misbehaving.

@@ -100,9 +100,9 @@ def test_auto_mode_preserves_sso_and_defaults_new_profiles_to_console(monkeypatc
     connection = Connection(auth_mode="auto")
     session = Mock()
     session._session.full_config = {"profiles": {connection.profile: {"sso_session": "company"}}}
-    monkeypatch.setattr(connection, "session", lambda: session)
+    monkeypatch.setattr(connection, "base_session", lambda: session)
     assert connection.mode() == "sso"
-    monkeypatch.setattr(connection, "session", Mock(side_effect=ProfileNotFound(profile="new")))
+    monkeypatch.setattr(connection, "base_session", Mock(side_effect=ProfileNotFound(profile="new")))
     assert connection.mode() == "console"
 
 

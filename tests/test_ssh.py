@@ -134,4 +134,4 @@ def test_ssh_context_preserved_across_reconnect(monkeypatch):
     result = server.diagnose_instance("i-0123456789abcdef0", ssh=True, source_ip=SOURCE,
                                       connection_path="public", ssh_port=2222, client_port=55555)
     server.resume_diagnosis(result["request_id"])
-    assert mocked.call_args.args[3:] == (True, SOURCE, "public", 2222, 55555)
+    assert mocked.call_args.args[3:] == (True, SOURCE, "public", 2222, 55555, False, None, None, None)

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0
+
+- Require a non-root source profile and diagnostics role. Assume a short-lived STS
+  session with an explicit deny for every operation outside diagnostic reads;
+  add `--role-arn` to setup/configure. Existing root-only configurations need migration.
+- Collect burst CPU credits, network bytes/packets and per-volume EBS latency.
+- Add optional existing CWAgent disk/RAM/process telemetry and bounded, explicitly
+  selected CloudWatch log streams without running host commands.
+- Inspect offline SSM instance profiles, simulated role permissions and endpoint
+  state/private DNS/security groups; distinguish these from unknown live agent state.
+- Check internet gateway attachments and optional website DNS/TCP/TLS from the
+  diagnostics server, with source-specific port rule analysis when DNS matches the instance.
+- Include confidence and missing checks with every finding; preserve new options
+  across reconnect/resume and report telemetry gaps explicitly.
+
 ## 0.3.0
 
 - Add a setup command that checks AWS CLI, installs it for the current user,

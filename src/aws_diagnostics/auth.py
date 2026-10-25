@@ -1,5 +1,6 @@
 """Keep credentials in AWS's cache, never in tool responses."""
 import atexit
+import json
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from .bootstrap import find_aws
+from .policy import SESSION_POLICY
 
 CLIENT_CONFIG = Config(connect_timeout=5, read_timeout=15, retries={"max_attempts": 2})
 AUTH_ERRORS = {"ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId",
@@ -23,6 +25,10 @@ def error_result(error):
     """Return safe structured failures, without token-bearing exception text."""
     code = (error.response["Error"]["Code"] if isinstance(error, ClientError)
             else type(error).__name__)
+    if code == "DiagnosticsSecurityBoundary":
+        return {"status": "security_setup_required", "message":
+                "Use a non-root AWS profile and set AWS_DIAGNOSTICS_ROLE_ARN to a trusted diagnostics role. "
+                "Diagnostics require an STS session restricted to diagnostic reads; no fallback is allowed."}
     if code in AUTH_ERRORS or code in {
         "UnauthorizedSSOTokenError", "SSOTokenLoadError", "TokenRetrievalError",
         "NoCredentialsError", "PartialCredentialsError", "ProfileNotFound",
@@ -37,10 +43,11 @@ def error_result(error):
 
 
 class Connection:
-    def __init__(self, profile=None, region=None, auth_mode=None):
+    def __init__(self, profile=None, region=None, auth_mode=None, role_arn=None):
         self.profile = profile or os.getenv("AWS_DIAGNOSTICS_PROFILE", "diagnostics")
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
         self.auth_mode = auth_mode or os.getenv("AWS_DIAGNOSTICS_AUTH_MODE", "auto")
+        self.role_arn = role_arn or os.getenv("AWS_DIAGNOSTICS_ROLE_ARN", "")
         if self.auth_mode not in {"auto", "console", "sso"}:
             raise ValueError("AWS_DIAGNOSTICS_AUTH_MODE must be auto, console, or sso")
         self.lock = threading.RLock()
@@ -50,13 +57,27 @@ class Connection:
 
     def session(self, region=None):
         # Fresh session sees CLI login; the SDK refreshes SSO or console credentials.
+        base = self.base_session(region)
+        sts = base.client("sts", config=CLIENT_CONFIG)
+        identity = sts.get_caller_identity()
+        role = self.role_arn
+        if identity["Arn"].endswith(":root") or not re.fullmatch(
+                r"arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role/[\w+=,.@/-]+", role):
+            raise ClientError({"Error": {"Code": "DiagnosticsSecurityBoundary"}}, "AssumeRole")
+        credentials = sts.assume_role(RoleArn=role, RoleSessionName="aws-diagnostics",
+            DurationSeconds=900, Policy=json.dumps(SESSION_POLICY, separators=(",", ":")))["Credentials"]
+        return boto3.Session(aws_access_key_id=credentials["AccessKeyId"],
+            aws_secret_access_key=credentials["SecretAccessKey"],
+            aws_session_token=credentials["SessionToken"], region_name=region or self.region)
+
+    def base_session(self, region=None):
         return boto3.Session(profile_name=self.profile, region_name=region or self.region)
 
     def mode(self):
         if self.auth_mode != "auto":
             return self.auth_mode
         try:
-            profiles = self.session()._session.full_config.get("profiles", {})
+            profiles = self.base_session()._session.full_config.get("profiles", {})
             config = profiles.get(self.profile, {})
             return "sso" if "sso_session" in config or "sso_start_url" in config else "console"
         except BotoCoreError:
@@ -66,7 +87,8 @@ class Connection:
         try:
             result = self.session().client("sts", config=CLIENT_CONFIG).get_caller_identity()
             return {"status": "connected", "account_id": result["Account"],
-                    "principal": result["Arn"], "region": self.region}
+                    "principal": result["Arn"], "region": self.region,
+                    "read_only_enforced": True, "boundary": "STS explicit-deny session policy"}
         except (BotoCoreError, ClientError) as error:
             return error_result(error)
 
