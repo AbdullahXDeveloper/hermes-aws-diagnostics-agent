@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aws-diagnostics-mcp"
+version = "0.3.0"
+description = "Reusable AWS diagnostics tools for desktop and VPS MCP agents"
+requires-python = ">=3.11"
+readme = "README.md"
+keywords = ["aws", "mcp", "diagnostics", "agents", "ec2"]
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["boto3[crt]>=1.43.118,<2", "mcp>=1.12,<2"]
+
+[project.urls]
+Repository = "https://github.com/AbdullahXDeveloper/hermes-aws-diagnostics-agent"
+Issues = "https://github.com/AbdullahXDeveloper/hermes-aws-diagnostics-agent/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+build = ["build>=1.2,<2", "twine>=6,<7"]
+
+[project.scripts]
+aws-diagnostics-mcp = "aws_diagnostics.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["aws_diagnostics*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

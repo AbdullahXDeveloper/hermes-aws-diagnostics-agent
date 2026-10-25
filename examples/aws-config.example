@@ -1,0 +1,12 @@
+# Admin configures this once on the host that runs the MCP server.
+# Merge into ~/.aws/config; never overwrite existing profiles.
+[profile diagnostics]
+sso_session = diagnostics
+sso_account_id = YOUR_12_DIGIT_ACCOUNT_ID
+sso_role_name = YOUR_ASSIGNED_PERMISSION_SET
+region = us-east-1
+
+[sso-session diagnostics]
+sso_start_url = https://YOUR_ORGANIZATION.awsapps.com/start
+sso_region = us-east-1
+sso_registration_scopes = sso:account:access

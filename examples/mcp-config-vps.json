@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "aws-diagnostics": {
+      "command": "aws-diagnostics-mcp",
+      "args": ["serve"],
+      "env": {
+        "AWS_DIAGNOSTICS_PROFILE": "diagnostics",
+        "AWS_DIAGNOSTICS_AUTH_MODE": "auto",
+        "AWS_DIAGNOSTICS_REMOTE": "true",
+        "AWS_REGION": "us-east-1"
+      }
+    }
+  }
+}
