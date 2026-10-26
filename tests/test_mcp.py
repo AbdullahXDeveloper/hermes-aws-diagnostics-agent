@@ -8,11 +8,14 @@ from mcp.client.stdio import stdio_client
 
 
 @pytest.mark.parametrize("arguments", [["-m", "aws_diagnostics.server"], ["-m", "aws_diagnostics", "serve"]])
-def test_real_stdio_handshake_and_tool_call(arguments):
+@pytest.mark.parametrize("access_mode", ["auto", "direct", "role"])
+def test_real_stdio_handshake_and_tool_call(arguments, access_mode):
     async def run():
         parameters = StdioServerParameters(command=sys.executable,
             args=arguments, env={"AWS_DIAGNOSTICS_PROFILE": "nonexistent-test-profile",
-                                 "AWS_DIAGNOSTICS_ROLE_ARN": "arn:aws:iam::123456789012:role/Diagnostics",
+                                 "AWS_DIAGNOSTICS_ACCESS_MODE": access_mode,
+                                 "AWS_DIAGNOSTICS_ALLOW_ROOT": "false",
+                                 "AWS_DIAGNOSTICS_ROLE_ARN": "arn:aws:iam::123456789012:role/Diagnostics" if access_mode == "role" else "",
                                  "PYTHONPATH": os.pathsep.join(sys.path)})
         async with stdio_client(parameters) as (reader, writer):
             async with ClientSession(reader, writer) as session:

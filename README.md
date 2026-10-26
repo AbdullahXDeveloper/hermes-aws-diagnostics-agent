@@ -36,7 +36,7 @@ For a client using JSON with an `mcpServers` object, replace the example path
 below with your client's actual MCP configuration file:
 
 ```sh
-aws-diagnostics-mcp setup --no-login --role-arn arn:aws:iam::123456789012:role/Diagnostics --config /actual/path/to/client-mcp.json
+aws-diagnostics-mcp setup --no-login --profile diagnostics --config /actual/path/to/client-mcp.json
 ```
 
 Setup checks AWS CLI v2.32+, installs it for the current user if needed using
@@ -45,12 +45,15 @@ verifies its version and writes MCP configuration. Other entries are preserved;
 changed files are backed up. Conflicting settings require `--replace`.
 Installation needs network access and permission to install software.
 
-`--role-arn` can also come from `AWS_DIAGNOSTICS_ROLE_ARN` or the existing client
-registration. Rerunning setup/configure preserves that registration's role when no
-replacement is supplied. Invalid role ARNs fail before installation or config writes.
-Without a role, setup may prepare the local installation but returns
-`security_setup_required` with a nonzero exit status and does not start browser login.
-Supply the existing role ARN and rerun setup; this does not create a role in AWS.
+Access defaults to `auto`: a configured `--role-arn` is assumed with a restrictive
+STS session policy; otherwise the existing IAM/SSO profile is used directly. Creating
+a new role is optional. Direct profiles need diagnostic read permissions themselves.
+`--role-arn` can also come from `AWS_DIAGNOSTICS_ROLE_ARN` or an existing client
+registration. Setup/configure preserve the existing role and access settings when
+no replacement is supplied. Use `--access-mode role` to require a restricted role,
+or `--access-mode direct` to explicitly use the source profile. Invalid role ARNs
+fail before configuration writes. Explicit role mode without an ARN returns
+`security_setup_required`; auto/direct mode can connect without one.
 
 - Add `--region ap-south-1` or your workload region; default is `us-east-1`.
 - Add `--remote` when the tool runs on a VPS.
@@ -102,20 +105,36 @@ acceptance test.
 
 ## Access and scope
 
-Diagnostics require a non-root source profile and an existing trusted role configured
-using `--role-arn` or `AWS_DIAGNOSTICS_ROLE_ARN`. Root diagnostics are blocked.
-The server assumes that role with a one-hour STS session by default, with a session policy allowing only diagnostic
-reads and explicitly denying all other actions. There is no fallback to the source
-credentials if role assumption fails. Your administrator must configure the role's
-permissions and trust first; the [example policy](examples/read-only-policy.json)
-is not deployed automatically. The source profile only calls STS identity/role assumption;
-its cached credentials are not stripped of their original permissions.
-Follow the [one-time IAM setup guide](docs/IAM_SETUP.md) for source login permissions,
-role trust and permissions-boundary troubleshooting. The agent assumes the role
-automatically; users do not need to switch roles manually in the Console.
+The server exposes diagnostic read operations only. Access is configurable:
+
+| Mode | Behavior | Additional AWS credential restriction |
+| --- | --- | --- |
+| `auto` (default) | Assume the configured diagnostics role; use the source profile directly when no role is configured | Restricted STS session only when using a role |
+| `role` | Require an existing trusted diagnostics role | Explicit-deny STS read-only session policy |
+| `direct` | Use the configured AWS profile's credentials | None added by this server; existing IAM policies control access |
+
+Set the mode with `--access-mode` or `AWS_DIAGNOSTICS_ACCESS_MODE`. A failed role
+assumption never falls back to direct access. Role sessions default to one hour;
+the [role policy](examples/read-only-policy.json) and trust are configured by the
+administrator. In direct mode, use an existing appropriately scoped profile or
+grant the reads in [the direct-profile example](examples/direct-read-policy.json).
+Direct mode does not remove broader source permissions and returns
+`read_only_enforced: false`; role mode returns `true` for the additional STS
+restriction. Successful diagnosis reports also include the selected access mode.
+
+Root is blocked by default. To deliberately use a root source, configure
+`--access-mode direct --allow-root` (or `AWS_DIAGNOSTICS_ACCESS_MODE=direct` and
+`AWS_DIAGNOSTICS_ALLOW_ROOT=true`). This enables only the server's existing
+diagnostic operations; the root credentials themselves retain full permissions.
+Use `--no-allow-root` to revoke the opt-in. Root cannot assume a diagnostics role.
+The server never enables this option automatically.
+
+Follow [IAM/access setup](docs/IAM_SETUP.md) for direct profile permissions, optional
+role trust and boundary troubleshooting. Configured roles are assumed automatically;
+manual Console role switching is not required.
 Passwords and AWS credentials stay in AWS's browser/CLI/SDK flows and local cache.
 
-Role credentials are renewed on each tool operation; their expiry does not require
+In role mode, credentials are renewed on each tool operation; their expiry does not require
 browser login while the source login remains valid. Console login credentials refresh
 automatically for up to 12 hours, subject to AWS session limits. To request a different
 role credential lifetime, set `AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS` in the MCP

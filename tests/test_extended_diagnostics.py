@@ -38,7 +38,7 @@ def test_security_boundary_fails_closed(monkeypatch, principal, role):
     monkeypatch.setenv("AWS_DIAGNOSTICS_ROLE_ARN", role)
     base = Mock()
     base.client.return_value.get_caller_identity.return_value = {"Arn": principal}
-    connection = Connection()
+    connection = Connection(access_mode="role")
     monkeypatch.setattr(connection, "base_session", lambda _: base)
     with pytest.raises(ClientError) as exc:
         connection.session()
@@ -49,7 +49,7 @@ def test_security_boundary_fails_closed(monkeypatch, principal, role):
 @pytest.mark.parametrize("role,reason", [("", "missing_role_arn"), ("invalid", "invalid_role_arn")])
 def test_role_configuration_error_precedes_login_and_aws_calls(monkeypatch, role, reason):
     monkeypatch.setenv("AWS_DIAGNOSTICS_ROLE_ARN", role)
-    connection = Connection()
+    connection = Connection(access_mode="role")
     base = Mock(side_effect=AssertionError("Must not inspect credentials before role configuration"))
     launch = Mock(side_effect=AssertionError("Must not start another login"))
     monkeypatch.setattr(connection, "base_session", base)

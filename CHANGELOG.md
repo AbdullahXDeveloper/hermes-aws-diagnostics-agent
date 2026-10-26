@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0
+
+- Add `auto` (default), `role`, and `direct` AWS access modes. A diagnostics role
+  is optional: auto uses a configured role, otherwise the source IAM/SSO profile.
+- Keep configured-role failures fail-closed; never silently fall back to direct
+  credentials. Explicit role mode still requires a valid IAM role ARN.
+- Add installation-only root opt-in with `--access-mode direct --allow-root` /
+  `AWS_DIAGNOSTICS_ALLOW_ROOT=true`, blocked by default and revocable with
+  `--no-allow-root`. Root cannot be used as a source for role assumption.
+- Report selected access mode and whether an additional STS read-only restriction
+  is enforced. Direct mode does not narrow source credentials even though the MCP
+  implements diagnostic read operations only.
+- Preserve access/root settings during configuration updates and add separate
+  direct-profile permissions and restricted-role MCP examples.
+
 ## 1.0.0
 
 - Prevent missing-role installations from reporting ready or starting browser login;

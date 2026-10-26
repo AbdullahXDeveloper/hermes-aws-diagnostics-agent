@@ -16,6 +16,8 @@ def local_temp(monkeypatch, tmp_path):
 @pytest.fixture
 def ready(monkeypatch):
     monkeypatch.setenv("AWS_DIAGNOSTICS_ROLE_ARN", "arn:aws:iam::123456789012:role/Diagnostics")
+    monkeypatch.setenv("AWS_DIAGNOSTICS_ACCESS_MODE", "auto")
+    monkeypatch.setenv("AWS_DIAGNOSTICS_ALLOW_ROOT", "false")
     check = {"aws_cli": {"status": "ok", "path": "/test/aws", "version": "aws-cli/2.38.5"}}
     monkeypatch.setattr(cli, "doctor", Mock(return_value=check))
     install = Mock(return_value="/test/aws")
@@ -49,7 +51,7 @@ def test_role_setting_reaches_mcp_configuration_and_login(ready, capsys):
     assert cli.main(["setup", "--role-arn", role]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["configuration"]["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_ROLE_ARN"] == role
-    assert ready[1].call_args.kwargs == {"role_arn": role}
+    assert ready[1].call_args.kwargs == {"role_arn": role, "access_mode": "auto", "allow_root": False}
 
 
 def test_setup_installs_and_rechecks_before_configuration(ready, monkeypatch, capsys):
@@ -85,7 +87,8 @@ def test_setup_forwards_login_settings(ready, capsys):
     assert cli.main(["setup", "--profile", "company", "--region", "eu-west-1",
                      "--auth-mode", "sso", "--remote"]) == 0
     ready[1].assert_called_once_with("/test/aws", "company", "eu-west-1", "sso", True,
-                                   role_arn="arn:aws:iam::123456789012:role/Diagnostics")
+                                   role_arn="arn:aws:iam::123456789012:role/Diagnostics",
+                                   access_mode="auto", allow_root=False)
     assert json.loads(capsys.readouterr().out)["login"]["status"] == "connected"
 
 
@@ -101,7 +104,7 @@ def test_setup_retains_config_if_login_fails(ready, tmp_path, capsys):
 def test_missing_role_is_not_reported_ready_or_sent_to_login(ready, monkeypatch, tmp_path, capsys, extra):
     monkeypatch.delenv("AWS_DIAGNOSTICS_ROLE_ARN", raising=False)
     path = tmp_path / "agent.json"
-    assert cli.main(["setup", "--config", str(path), *extra]) == 1
+    assert cli.main(["setup", "--access-mode", "role", "--config", str(path), *extra]) == 1
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "security_setup_required"
     assert result["security"]["reason"] == "missing_role_arn"
@@ -109,6 +112,28 @@ def test_missing_role_is_not_reported_ready_or_sent_to_login(ready, monkeypatch,
     assert path.is_file()
     assert "--role-arn" in result["configuration"]["next_step"]
     ready[1].assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["auto", "direct"])
+def test_setup_without_role_can_login_using_source_profile(ready, monkeypatch, tmp_path, capsys, mode):
+    monkeypatch.delenv("AWS_DIAGNOSTICS_ROLE_ARN", raising=False)
+    path = tmp_path / "agent.json"
+    assert cli.main(["setup", "--access-mode", mode, "--config", str(path)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ready"
+    assert result["access"] == {"mode": "direct", "read_only_enforced": False, "root_opt_in": False}
+    assert "AWS_DIAGNOSTICS_ROLE_ARN" not in json.loads(path.read_text())["mcpServers"]["aws-diagnostics"]["env"]
+    assert ready[1].call_args.kwargs == {"access_mode": mode, "allow_root": False}
+
+
+def test_root_opt_in_is_forwarded_to_login_and_saved_config(ready, monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("AWS_DIAGNOSTICS_ROLE_ARN", raising=False)
+    path = tmp_path / "agent.json"
+    assert cli.main(["setup", "--access-mode", "direct", "--allow-root", "--config", str(path)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["access"]["root_opt_in"] is True
+    assert ready[1].call_args.kwargs == {"access_mode": "direct", "allow_root": True}
+    assert json.loads(path.read_text())["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_ALLOW_ROOT"] == "true"
 
 
 def test_setup_preserves_existing_role_when_flag_is_omitted(ready, monkeypatch, tmp_path, capsys):

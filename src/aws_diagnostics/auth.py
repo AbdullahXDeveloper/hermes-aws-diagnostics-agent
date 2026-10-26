@@ -14,7 +14,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from .bootstrap import find_aws
-from .policy import SESSION_POLICY, valid_role_arn
+from .policy import SESSION_POLICY, valid_role_arn, root_opt_in
 
 CLIENT_CONFIG = Config(connect_timeout=5, read_timeout=15, retries={"max_attempts": 2})
 AUTH_ERRORS = {"ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId",
@@ -27,16 +27,16 @@ def error_result(error):
             else type(error).__name__)
     if code == "DiagnosticsSecurityBoundary":
         return {"status": "security_setup_required", "message":
-                "Use a non-root AWS profile and set AWS_DIAGNOSTICS_ROLE_ARN to a trusted diagnostics role. "
-                "Diagnostics require an STS session restricted to diagnostic reads; no fallback is allowed."}
+                "Check the selected access mode and source profile. Role mode requires a valid trusted role; "
+                "direct root access requires explicit opt-in. A configured role failure never falls back to direct credentials."}
     if code in {"DiagnosticsRoleMissing", "DiagnosticsRoleInvalid", "DiagnosticsRootIdentity"}:
         reason, message = {
             "DiagnosticsRoleMissing": ("missing_role_arn",
-                "AWS_DIAGNOSTICS_ROLE_ARN is missing. Set the existing diagnostics role ARN in this MCP installation using setup/configure --role-arn, then reload the MCP server. Browser login alone cannot configure the role."),
+                "Role access mode requires AWS_DIAGNOSTICS_ROLE_ARN. Configure the existing role with --role-arn, or select --access-mode auto/direct to use the source profile without an additional role."),
             "DiagnosticsRoleInvalid": ("invalid_role_arn",
                 "AWS_DIAGNOSTICS_ROLE_ARN must be a complete IAM role ARN, not an STS assumed-role session ARN. Correct this MCP installation's configuration and reload the server."),
             "DiagnosticsRootIdentity": ("root_identity",
-                "This source profile is logged in as root. Use a separate non-root IAM/SSO profile that can assume the configured diagnostics role."),
+                "This source profile is root. Use a non-root profile, or explicitly configure direct access with --allow-root / AWS_DIAGNOSTICS_ALLOW_ROOT=true. Root source permissions remain unrestricted; root cannot assume a diagnostics role."),
         }[code]
         return {"status": "security_setup_required", "reason": reason, "message": message}
     if code in AUTH_ERRORS or code in {
@@ -51,7 +51,7 @@ def error_result(error):
     if code in {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}:
         message = error.response.get("Error", {}).get("Message", "").lower()
         result = {"status": "error", "code": code, "operation": error.operation_name,
-                  "message": "AWS denied this operation. Check the diagnostics role policy, source AssumeRole permission and role trust; another login does not fix missing permissions."}
+                  "message": "AWS denied this operation. Check permissions on the selected source profile or diagnostics role. For AssumeRole, check source permission and role trust. Another login does not fix missing permissions."}
         if "permissions boundary" in message:
             result["policy_type"] = "permissions_boundary"
             result["message"] = "AWS reports a permissions boundary restriction. An administrator must check the boundary on the principal making this operation, along with its permissions policy."
@@ -67,11 +67,16 @@ def error_result(error):
 
 
 class Connection:
-    def __init__(self, profile=None, region=None, auth_mode=None, role_arn=None):
+    def __init__(self, profile=None, region=None, auth_mode=None, role_arn=None,
+                 access_mode=None, allow_root=None):
         self.profile = profile or os.getenv("AWS_DIAGNOSTICS_PROFILE", "diagnostics")
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
         self.auth_mode = auth_mode or os.getenv("AWS_DIAGNOSTICS_AUTH_MODE", "auto")
         self.role_arn = role_arn or os.getenv("AWS_DIAGNOSTICS_ROLE_ARN", "")
+        self.access_mode = access_mode if access_mode is not None else os.getenv("AWS_DIAGNOSTICS_ACCESS_MODE", "auto")
+        if self.access_mode not in {"auto", "role", "direct"}:
+            raise ValueError("AWS_DIAGNOSTICS_ACCESS_MODE must be auto, role, or direct")
+        self.allow_root = root_opt_in(allow_root if allow_root is not None else os.getenv("AWS_DIAGNOSTICS_ALLOW_ROOT"))
         duration = os.getenv("AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS", "3600")
         try:
             self.session_duration = int(duration)
@@ -86,18 +91,31 @@ class Connection:
         self.login = {"status": "idle"}
         atexit.register(self.close)
 
+    @property
+    def uses_role(self):
+        return self.access_mode == "role" or (self.access_mode == "auto" and bool(self.role_arn))
+
+    def access_details(self):
+        return {"access_mode": "role" if self.uses_role else "direct",
+                "read_only_operations_only": True,
+                "read_only_enforced": self.uses_role,
+                "boundary": ("STS explicit-deny session policy" if self.uses_role else
+                             "Source profile permissions; no additional STS session restriction")}
+
     def session(self, region=None):
         # Report configuration errors before starting or examining a login session.
-        if not self.role_arn:
+        if self.uses_role and not self.role_arn:
             raise ClientError({"Error": {"Code": "DiagnosticsRoleMissing"}}, "AssumeRole")
-        if not valid_role_arn(self.role_arn):
+        if self.uses_role and not valid_role_arn(self.role_arn):
             raise ClientError({"Error": {"Code": "DiagnosticsRoleInvalid"}}, "AssumeRole")
         # Fresh session sees CLI login; the SDK refreshes SSO or console credentials.
         base = self.base_session(region)
         sts = base.client("sts", config=CLIENT_CONFIG)
         identity = sts.get_caller_identity()
-        if identity["Arn"].endswith(":root"):
+        if identity["Arn"].endswith(":root") and (self.uses_role or not self.allow_root):
             raise ClientError({"Error": {"Code": "DiagnosticsRootIdentity"}}, "AssumeRole")
+        if not self.uses_role:
+            return base
         credentials = sts.assume_role(RoleArn=self.role_arn, RoleSessionName="aws-diagnostics",
             DurationSeconds=self.session_duration, Policy=json.dumps(SESSION_POLICY, separators=(",", ":")))["Credentials"]
         return boto3.Session(aws_access_key_id=credentials["AccessKeyId"],
@@ -122,7 +140,8 @@ class Connection:
             result = self.session().client("sts", config=CLIENT_CONFIG).get_caller_identity()
             return {"status": "connected", "account_id": result["Account"],
                     "principal": result["Arn"], "region": self.region,
-                    "read_only_enforced": True, "boundary": "STS explicit-deny session policy"}
+                    "root_identity": result["Arn"].endswith(":root"),
+                    **self.access_details()}
         except (BotoCoreError, ClientError) as error:
             return error_result(error)
 

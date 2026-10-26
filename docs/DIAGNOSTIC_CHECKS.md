@@ -34,11 +34,15 @@ Configuration observations and metric thresholds do not establish application ro
 cause. `partial` means a check is unavailable, unknown, optional and not requested,
 or sampled. Consult `unavailable_checks` for its exact status.
 
-IAM deployment is separate from code installation: use a non-root source identity
-and configure an existing trusted diagnostics role. The example role policy matches
-the runtime session policy. Narrow resources/account scope further for your deployment.
-The source needs `sts:AssumeRole`; the diagnostics session explicitly denies it,
-`ssm:SendCommand` and every other action outside the diagnostic read list.
+IAM deployment is separate from code installation. Auto access uses the existing
+source profile directly when no role ARN is configured. That profile needs the
+diagnostic reads itself; use [the direct-read example](../examples/direct-read-policy.json)
+as a permission-grant template. No extra STS boundary is added in direct mode.
+For optional restricted-role access, configure a trusted role; the role example
+matches the runtime session policy. The source needs role-assumption authorization,
+and the resulting diagnostic session explicitly denies `sts:AssumeRole`,
+`ssm:SendCommand` and actions outside the diagnostic read list. Narrow resources and
+account scope for your deployment. See [access setup](IAM_SETUP.md).
 
 For Mumbai-only access, create a managed policy using
 [`read-only-policy-ap-south-1.json`](../examples/read-only-policy-ap-south-1.json)

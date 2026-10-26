@@ -65,10 +65,11 @@ def install_aws():
     return executable
 
 
-def login(executable, profile, region, auth_mode, remote, role_arn=None):
+def login(executable, profile, region, auth_mode, remote, role_arn=None, access_mode=None, allow_root=None):
     """Keep login in the foreground so exiting setup cannot cancel browser approval."""
     from .auth import Connection
-    connection = Connection(profile=profile, region=region, auth_mode=auth_mode, role_arn=role_arn)
+    connection = Connection(profile=profile, region=region, auth_mode=auth_mode, role_arn=role_arn,
+                            access_mode=access_mode, allow_root=allow_root)
     try:
         current = connection.identity()
         if current["status"] == "connected":

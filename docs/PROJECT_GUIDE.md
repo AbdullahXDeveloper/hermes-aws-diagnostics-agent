@@ -5,8 +5,9 @@ Hermes) launches it, calls its tools, receives AWS evidence, and explains the
 results. The server provides read-only diagnostics; it does not itself contain
 an AI model or implement automatic infrastructure fixes.
 
-Typical flow: agent -> MCP server -> non-root source login -> restricted STS
-role session -> EC2/CloudWatch/SSM/IAM reads -> findings and evidence -> agent.
+Typical flow: agent -> MCP server -> source login -> optional restricted STS role
+session -> EC2/CloudWatch/SSM/IAM reads -> findings and evidence -> agent. Auto mode
+uses the source profile directly if no role is configured; root requires explicit opt-in.
 
 ## Application code: `src/aws_diagnostics/`
 
@@ -17,7 +18,7 @@ role session -> EC2/CloudWatch/SSM/IAM reads -> findings and evidence -> agent.
 | [`cli.py`](../src/aws_diagnostics/cli.py) | Implements `serve`, `setup`, `configure`, `doctor`, and `--version`; generates/merges client configuration with backups. |
 | [`bootstrap.py`](../src/aws_diagnostics/bootstrap.py) | Finds/checks AWS CLI, installs it from AWS's official installer when needed, and supports terminal login during setup. |
 | [`server.py`](../src/aws_diagnostics/server.py) | Registers the seven MCP tools, gives the client usage instructions, and retains pending diagnoses across reconnects within the same server process. |
-| [`auth.py`](../src/aws_diagnostics/auth.py) | Handles Console/SSO login, connection status, root rejection, role assumption with the restrictive session policy, session-duration configuration, and safe error reporting. |
+| [`auth.py`](../src/aws_diagnostics/auth.py) | Handles Console/SSO login, direct/role/auto access, default root blocking with explicit opt-in, optional restricted role sessions, and safe error reporting. |
 | [`policy.py`](../src/aws_diagnostics/policy.py) | Defines the allowed diagnostic AWS actions and explicit-deny STS session policy. |
 | [`diagnostics.py`](../src/aws_diagnostics/diagnostics.py) | Coordinates instance/region discovery and diagnosis, collecting evidence, findings, permission/data gaps, and recommendations. |
 | [`telemetry.py`](../src/aws_diagnostics/telemetry.py) | Reads CloudWatch CPU-credit/network/EBS metrics, optional existing CWAgent telemetry, and bounded selected log samples. |
@@ -36,6 +37,7 @@ role session -> EC2/CloudWatch/SSM/IAM reads -> findings and evidence -> agent.
 | [`test_diagnostics.py`](../tests/test_diagnostics.py) | Checks discovery pagination, findings, missing permissions, IAM error guidance, and reconnect/resume behavior with mocked AWS calls. |
 | [`test_ssh.py`](../tests/test_ssh.py) | Checks source CIDRs, security-group aggregation, ACL ordering/ports, route selection, and unknown/incomplete evidence handling. |
 | [`test_extended_diagnostics.py`](../tests/test_extended_diagnostics.py) | Checks restricted role sessions, duration settings, no credential fallback, additional telemetry/SSM/website checks, and new-option resume behavior. |
+| [`test_access_modes.py`](../tests/test_access_modes.py) | Checks direct IAM/SSO access, explicit root opt-in, honest credential-boundary reporting, access-setting persistence, and direct discovery with real botocore response validation. |
 
 ## Configuration examples: `examples/`
 
@@ -45,9 +47,11 @@ Replace sample accounts, roles, profiles, paths and regions with each user's val
 | File | Purpose |
 | --- | --- |
 | [`read-only-policy.json`](../examples/read-only-policy.json) | Example permissions policy for the diagnostics role, matching the runtime read-only session boundary. |
+| [`direct-read-policy.json`](../examples/direct-read-policy.json) | Grants required diagnostic reads to a direct source profile; does not remove permissions granted by other policies. |
 | [`read-only-policy-ap-south-1.json`](../examples/read-only-policy-ap-south-1.json) | Optional Mumbai-only version of the role policy, with limited global identity/IAM exceptions. |
 | [`mcp-config.json`](../examples/mcp-config.json) | Example desktop MCP client registration. |
 | [`mcp-config-vps.json`](../examples/mcp-config-vps.json) | Example registration for remote/VPS browser authorization. |
+| [`mcp-config-role.json`](../examples/mcp-config-role.json) | Optional explicit restricted-role registration with a placeholder role ARN. |
 | [`aws-config.example`](../examples/aws-config.example) | Example IAM Identity Center/SSO configuration for AWS CLI profiles. |
 
 ## Documentation: `docs/`
@@ -86,7 +90,8 @@ reusable source and should not be committed as a whole.
 | `.venv/` | Local Python runtime environment and installed dependencies. |
 | `.tmp/` | Disposable test/build environments and verification output. |
 | `.tmp/review_verify.py` | Local archive audit and installed-wheel CLI/MCP smoke-check script used during review. |
-| `.tmp/review-dist-1.0.0/` | Fresh 1.0.0 wheel and source distribution generated during review. |
+| `.tmp/review-dist-1.0.0/` | Earlier 1.0.0 review build; predates the 1.1.0 access-mode changes. |
+| `.tmp/release-1.1.0/` | Fresh 1.1.0 wheel/source distribution and installed-package verification output. |
 | `.tmp/review-wheel-env/` | Separate environment used to install and verify that wheel. |
 | `dist/` | Earlier generated distribution artifacts; filenames may refer to older versions. Use a newly validated build for release. |
 | `.pytest_cache/` | Pytest's cached run metadata. |

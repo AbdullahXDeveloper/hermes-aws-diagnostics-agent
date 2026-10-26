@@ -1,13 +1,39 @@
-# One-time IAM setup
+# AWS access setup: direct profiles or an optional diagnostics role
 
-An account administrator provisions these resources. The MCP server does not
+An account administrator provisions any required permissions. The MCP server does not
 create users, roles, permissions or credentials. Use your own account ID and
 principal ARN in place of every example below; no account is built into the code.
 
-The intended flow is: non-root Console/SSO profile -> assume `Diagnostics` ->
+The optional restricted-role flow is: non-root Console/SSO profile -> assume `Diagnostics` ->
 read diagnostic evidence. The user approves browser login; the agent assumes the
 configured role automatically. Manual Console role switching is only an optional
 verification step, not part of each diagnosis.
+
+## Direct access: no new role required
+
+By default, `--access-mode auto` uses the configured role if present; otherwise it
+uses the source profile directly. An existing IAM or SSO profile can therefore
+work without creating another role. The profile must already allow the required
+diagnostic reads. Administrators can grant the reads in
+[`direct-read-policy.json`](../examples/direct-read-policy.json) to an appropriate
+source identity/SSO permission set. That example grants reads; it does not remove
+permissions granted by other policies.
+
+```sh
+aws-diagnostics-mcp setup --no-login --profile diagnostics --access-mode auto --config /actual/path/to/client-mcp.json
+```
+
+Direct mode does not attach an additional STS session restriction. Status and
+successful diagnosis responses report `read_only_enforced: false` even though
+the MCP server implements diagnostic reads only. Existing IAM policies still
+control what the profile can access, and missing reads are reported as gaps/errors.
+
+For a deliberately selected root profile, use `--access-mode direct --allow-root`.
+Root is blocked without that explicit installation setting, and its credentials
+retain full permissions. A root source cannot be used to assume the optional role.
+Use `--no-allow-root` to disable the setting again.
+
+The remaining role/trust steps are needed only if choosing restricted-role access.
 
 ## Source identity
 
@@ -21,7 +47,7 @@ For Console-to-CLI login, attach AWS's managed policy
 `signin:AuthorizeOAuth2Access` and `signin:CreateOAuth2Token`; it does not grant
 EC2 access. Existing SSO profiles use their organization's SSO authorization.
 
-Grant the source identity permission to assume only the diagnostics role:
+For restricted-role access, grant the source identity permission to assume only the diagnostics role:
 
 ```json
 {
@@ -34,11 +60,12 @@ Grant the source identity permission to assume only the diagnostics role:
 }
 ```
 
-The dedicated source identity should not need administrator or direct diagnostic
+In restricted-role access, the source identity should not need administrator or direct diagnostic
 service access. Console EC2 access denied **as this user** is therefore expected.
 
 ## Diagnostics role
 
+This section is optional. `--access-mode role` can be used to require it explicitly.
 Create `Diagnostics`, or reuse a dedicated role that meets these requirements.
 Trust only the intended source principal. For an IAM user, a trust policy is:
 
@@ -74,6 +101,8 @@ does not grant permissions by itself. Check any boundary already attached to the
 source identity and diagnostics role. Do not attach the diagnostics-only policy
 to the source as a boundary: its explicit deny excludes browser authorization and
 `sts:AssumeRole`, which the source needs.
+For direct access, use the direct-read example plus the Console login permissions
+instead of attaching the role-specific explicit-deny policy to the login identity.
 
 Keep organization-required boundaries in place. Have the administrator review
 the source's browser-login and role-assumption actions, role trust, and the

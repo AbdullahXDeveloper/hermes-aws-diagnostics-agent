@@ -12,30 +12,49 @@ import sys
 import tempfile
 
 from .bootstrap import find_aws, install_aws, login
-from .policy import valid_role_arn
+from .policy import valid_role_arn, root_opt_in
+
+
+def existing_server_env(config_path):
+    if config_path is None or not config_path.exists():
+        return {}
+    if config_path.is_symlink():
+        raise ValueError("Refusing to edit a symlink. Use the actual config file path.")
+    data = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+        raise ValueError("Expected a JSON object with an mcpServers object. Client config format may differ.")
+    entry = data.get("mcpServers", {}).get("aws-diagnostics")
+    return entry["env"] if isinstance(entry, dict) and isinstance(entry.get("env"), dict) else {}
+
+
+def resolve_access_options(access_mode=None, allow_root=None, config_path=None):
+    existing = existing_server_env(config_path)
+    mode = access_mode if access_mode is not None else os.getenv(
+        "AWS_DIAGNOSTICS_ACCESS_MODE", existing.get("AWS_DIAGNOSTICS_ACCESS_MODE", "auto"))
+    if mode not in {"auto", "role", "direct"}:
+        raise ValueError("--access-mode must be auto, role, or direct")
+    root = allow_root if allow_root is not None else os.getenv(
+        "AWS_DIAGNOSTICS_ALLOW_ROOT", existing.get("AWS_DIAGNOSTICS_ALLOW_ROOT"))
+    return mode, root_opt_in(root)
 
 
 def resolve_role_arn(role_arn=None, config_path=None):
     """Use an explicit role, process setting, or the existing client registration."""
     role = role_arn if role_arn is not None else os.getenv("AWS_DIAGNOSTICS_ROLE_ARN")
-    if role is None and config_path is not None and config_path.exists():
-        if config_path.is_symlink():
-            raise ValueError("Refusing to edit a symlink. Use the actual config file path.")
-        data = json.loads(config_path.read_text(encoding="utf-8-sig"))
-        if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
-            raise ValueError("Expected a JSON object with an mcpServers object. Client config format may differ.")
-        entry = data.get("mcpServers", {}).get("aws-diagnostics")
-        if isinstance(entry, dict) and isinstance(entry.get("env"), dict):
-            role = entry["env"].get("AWS_DIAGNOSTICS_ROLE_ARN")
+    if role is None:
+        role = existing_server_env(config_path).get("AWS_DIAGNOSTICS_ROLE_ARN")
     if role and not valid_role_arn(role):
         raise ValueError("--role-arn / AWS_DIAGNOSTICS_ROLE_ARN must be a complete IAM role ARN, not an STS session ARN")
     return role or None
 
 
-def configuration(profile="diagnostics", region="us-east-1", auth_mode="auto", remote=False, role_arn=None):
+def configuration(profile="diagnostics", region="us-east-1", auth_mode="auto", remote=False, role_arn=None,
+                  access_mode=None, allow_root=None):
     role_arn = resolve_role_arn(role_arn)
+    access_mode, allow_root = resolve_access_options(access_mode, allow_root)
     env = {"AWS_DIAGNOSTICS_PROFILE": profile, "AWS_REGION": region,
-           "AWS_DIAGNOSTICS_AUTH_MODE": auth_mode}
+           "AWS_DIAGNOSTICS_AUTH_MODE": auth_mode, "AWS_DIAGNOSTICS_ACCESS_MODE": access_mode,
+           "AWS_DIAGNOSTICS_ALLOW_ROOT": str(allow_root).lower()}
     if remote:
         env["AWS_DIAGNOSTICS_REMOTE"] = "true"
     if role_arn:
@@ -84,7 +103,7 @@ def write_configuration(path, generated, replace=False):
             temporary.unlink()
     return {"status": "configured", "path": str(path),
             "backup": str(backup) if backup else None,
-            "next_step": ("Reload your agent, then ask: Connect AWS." if entry.get("env", {}).get("AWS_DIAGNOSTICS_ROLE_ARN") else
+            "next_step": ("Reload your agent, then ask: Connect AWS." if entry.get("env", {}).get("AWS_DIAGNOSTICS_ACCESS_MODE") != "role" or entry.get("env", {}).get("AWS_DIAGNOSTICS_ROLE_ARN") else
                           "Configure an existing diagnostics role with --role-arn before connecting AWS; then reload the MCP server.")}
 
 
@@ -121,6 +140,10 @@ def main(argv=None):
         command.add_argument("--auth-mode", choices=["auto", "console", "sso"], default="auto")
         command.add_argument("--remote", action="store_true", help="Use VPS/cross-device Console login.")
         command.add_argument("--role-arn", help="Existing diagnostics role to assume with a restricted session policy.")
+        command.add_argument("--access-mode", choices=["auto", "role", "direct"], default=None,
+                             help="auto uses a configured role, otherwise the source profile; role requires an ARN; direct uses the source profile.")
+        command.add_argument("--allow-root", action=argparse.BooleanOptionalAction, default=None,
+                             help="Explicitly allow a root profile in direct mode. Does not restrict root credentials.")
         command.add_argument("--replace", action="store_true", help="Replace an existing aws-diagnostics entry (backup created).")
     setup.add_argument("--no-login", action="store_true", help="Prepare installation/config only; log in from the agent later.")
     setup.add_argument("--no-install", action="store_true", help="Fail if AWS CLI needs installation or upgrade.")
@@ -137,13 +160,15 @@ def main(argv=None):
         if args.config:
             args.config = args.config.expanduser().absolute()
         args.role_arn = resolve_role_arn(args.role_arn, args.config)
+        args.access_mode, args.allow_root = resolve_access_options(args.access_mode, args.allow_root, args.config)
         if args.command == "setup":
             return run_setup(args)
-        result = configuration(args.profile, args.region, args.auth_mode, args.remote, args.role_arn)
+        result = configuration(args.profile, args.region, args.auth_mode, args.remote, args.role_arn,
+                               args.access_mode, args.allow_root)
         if args.config:
             result = write_configuration(args.config, result, args.replace)
-        if not args.role_arn:
-            print("AWS diagnostics is not ready: configure an existing trusted role with --role-arn. This output is an incomplete configuration template.", file=sys.stderr)
+        if args.access_mode == "role" and not args.role_arn:
+            print("Role mode requires --role-arn. This output is an incomplete configuration template.", file=sys.stderr)
         print(json.dumps(result, indent=2))
         return 0
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
@@ -153,7 +178,8 @@ def main(argv=None):
 
 def run_setup(args):
     # Check config conflicts before downloading or installing anything.
-    generated = configuration(args.profile, args.region, args.auth_mode, args.remote, args.role_arn)
+    generated = configuration(args.profile, args.region, args.auth_mode, args.remote, args.role_arn,
+                              args.access_mode, args.allow_root)
     replace = args.replace
     if args.config and args.config.is_symlink():
         raise ValueError("Refusing to edit a symlink. Use the actual config file path.")
@@ -180,17 +206,22 @@ def run_setup(args):
         raise ValueError("AWS CLI installation could not be verified. Check your installation and rerun setup.")
     executable = checks["aws_cli"]["path"]
     generated["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_AWS_CLI"] = executable
-    result = {"status": "ready" if args.role_arn else "security_setup_required", "aws_cli": checks["aws_cli"]}
+    uses_role = args.access_mode == "role" or (args.access_mode == "auto" and bool(args.role_arn))
+    missing_role = args.access_mode == "role" and not args.role_arn
+    result = {"status": "security_setup_required" if missing_role else "ready", "aws_cli": checks["aws_cli"],
+              "access": {"mode": "role" if uses_role else "direct", "read_only_enforced": uses_role,
+                         "root_opt_in": args.allow_root}}
     result["configuration"] = (write_configuration(args.config, generated, replace)
                                if args.config else generated)
     result["login"] = {"status": "deferred", "message": "Reload your agent and ask Connect AWS."}
-    if not args.role_arn:
+    if missing_role:
         result["login"] = {"status": "not_started", "message": "Configure an existing trusted diagnostics role with --role-arn before browser login."}
         result["security"] = {"status": "security_setup_required", "reason": "missing_role_arn",
                               "message": "Local installation is prepared, but AWS diagnostics cannot run without AWS_DIAGNOSTICS_ROLE_ARN. Rerun setup with --role-arn and the same client configuration path."}
     elif not args.no_login:
         try:
             role_options = {"role_arn": args.role_arn} if args.role_arn else {}
+            role_options.update(access_mode=args.access_mode, allow_root=args.allow_root)
             result["login"] = login(executable, args.profile, args.region, args.auth_mode, args.remote, **role_options)
         except (OSError, subprocess.TimeoutExpired):
             result["login"] = {"status": "login_failed", "message": "Retry Connect AWS from your agent."}

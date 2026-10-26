@@ -72,18 +72,19 @@ work and selects the target instance.
    inspect conflicting settings before replacing them. Other JSON entries are
    preserved and an existing changed config is backed up.
 
-   Supply `--role-arn` with the user's existing trusted diagnostics role ARN, or
-   retain it from an existing registration / `AWS_DIAGNOSTICS_ROLE_ARN` environment
-   setting. Setup validates the ARN and preserves a configured role when the flag
-   is omitted. Diagnostics require a non-root source profile and restricted STS
-   role session. If the role is not provisioned yet, finish local installation
-   and report `security_setup_required`; do not create IAM resources or weaken
-   the boundary as part of installation. The example read policy is for the
-   account administrator to deploy.
-   Setup exits nonzero and does not launch login if the role is missing. A missing
-   local role setting does not prove that no role exists in AWS: ask for its ARN
-   before telling the user to create another one. Do not report AWS diagnostics as
-   connected merely because installation or host-terminal health checks succeeded.
+   Access defaults to `auto`: if a trusted role ARN is configured with `--role-arn`,
+   environment or an existing registration, use the restricted STS role session;
+   otherwise use the existing source IAM/SSO profile directly. A new role is optional.
+   Setup preserves existing role/access settings. Explicit `--access-mode role`
+   without an ARN exits nonzero and does not launch login. Configured role failures
+   never fall back to direct access. Direct mode needs diagnostic permissions on
+   the source profile and must not be described as STS-enforced read-only.
+   Root is blocked unless the user explicitly authorizes installation settings
+   `--access-mode direct --allow-root`; never enable those settings on the user's
+   behalf merely to make a denied operation succeed. The root credentials retain
+   full permissions. No IAM resources are created as part of installation.
+   Do not report AWS diagnostics as connected merely because installation or
+   host-terminal health checks succeeded.
    Follow [one-time IAM setup](IAM_SETUP.md) when the user explicitly requests IAM
    provisioning. Normal installation alone does not authorize creating IAM resources.
 
@@ -102,8 +103,9 @@ work and selects the target instance.
    Never ask for passwords, MFA codes, access keys or session tokens in chat.
    Remote Console login uses a distinct, sensitive browser authorization code;
    prefer private input or the user's local `aws login --remote` terminal flow.
-   A `security_setup_required` response needs the non-root profile/role configuration,
-   not another browser login. Role trust and `sts:AssumeRole` permission must be in place.
+   For `security_setup_required`, explain its reason and the selected access mode
+   rather than restarting login repeatedly. Role trust and `sts:AssumeRole` permission
+   are needed only when using the optional diagnostics role.
    IAM Console login also requires `SignInLocalDevelopmentAccess` on the source
    identity. Check existing permissions boundaries if AWS reports a boundary denial.
 6. For a requested diagnosis, after approval, check `connection_status`, discover instances in the user's
@@ -120,5 +122,6 @@ healthy checks. Optional `app_checks` reads existing CWAgent metrics and selecte
 CloudWatch log streams; it does not run host commands. Optional `website_url`
 checks public DNS/TCP/TLS from the server; source-specific website rule analysis
 also needs the relevant source IPv4/path. See [diagnostic checks](DIAGNOSTIC_CHECKS.md).
-Diagnostic credentials use an AWS-enforced read-only STS session policy; the
-role's permissions/trust are not automatically deployed. See [authentication and scope](AUTHENTICATION.md).
+Role access uses an AWS-enforced read-only STS session policy. Direct access
+retains the source profile's permissions; the server exposes read operations only.
+Policies/trust are not automatically deployed. See [authentication and scope](AUTHENTICATION.md).

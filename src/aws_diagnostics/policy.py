@@ -2,6 +2,19 @@
 import re
 
 
+def root_opt_in(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, str):
+        if value.strip().lower() in {"true", "1", "yes"}:
+            return True
+        if value.strip().lower() in {"false", "0", "no", ""}:
+            return False
+    raise ValueError("AWS_DIAGNOSTICS_ALLOW_ROOT must be true or false")
+
+
 def valid_role_arn(value):
     return isinstance(value, str) and bool(re.fullmatch(
         r"arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role/[\w+=,.@/-]+", value))

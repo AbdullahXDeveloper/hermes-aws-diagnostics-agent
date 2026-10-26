@@ -5,19 +5,30 @@
 Requirements: Python 3.11+, AWS CLI v2.32+ and an existing AWS account. Non-root
 IAM Console login does not require IAM Identity Center. Company SSO remains supported.
 
-Diagnostics now require a non-root source profile plus `AWS_DIAGNOSTICS_ROLE_ARN`.
-The server checks the role setting before inspecting credentials. Missing or invalid
-role settings return `security_setup_required` with `missing_role_arn` or
-`invalid_role_arn`; a root source returns `root_identity`. Fix the indicated local
-configuration first rather than repeatedly requesting browser approval. The ARN
-must identify the IAM role, not an STS assumed-role session.
-Root browser login can complete, but diagnostic access is blocked. An administrator
-must create a diagnostics role with the example read permissions, trust the source
-IAM principal, and allow that principal `sts:AssumeRole` on the role. Pass the role
-to setup/configure with `--role-arn arn:aws:iam::123456789012:role/Diagnostics`.
-The server attaches an explicit-deny read-only session policy on every role assumption;
-it never uses unrestricted source credentials for diagnostic service calls. Existing
-SSO users also need permission to assume the configured diagnostics role.
+Use an existing IAM/SSO profile; a new diagnostics role is optional. The access
+setting is separate from Console-versus-SSO authentication:
+
+- `AWS_DIAGNOSTICS_ACCESS_MODE=auto` (default): assume a configured diagnostics
+  role; with no role configured, use the source profile directly.
+- `role`: require `AWS_DIAGNOSTICS_ROLE_ARN`. Missing/invalid ARNs return
+  `security_setup_required` before login. The ARN must identify an IAM role,
+  not an STS assumed-role session. An administrator configures role trust and
+  permissions; the source needs role-assumption authorization. Every assumption
+  includes the restrictive diagnostic session policy. Failed assumptions do not
+  fall back to the source credentials.
+- `direct`: use source credentials even if a role ARN is retained in configuration.
+  The profile needs the diagnostic reads itself; no additional STS restriction is
+  added. Its credentials retain their original permissions. Connection status and
+  successful diagnoses report `read_only_enforced: false` for this mode, while
+  `read_only_operations_only: true` describes the tool's implemented operations.
+
+Root is blocked unless explicitly enabled for direct access with
+`--access-mode direct --allow-root`, equivalent to
+`AWS_DIAGNOSTICS_ACCESS_MODE=direct` and `AWS_DIAGNOSTICS_ALLOW_ROOT=true`.
+Root credentials retain full permissions even though the tool exposes only
+diagnostic reads. A root source cannot assume the diagnostics role, even with
+this opt-in. `--no-allow-root` disables the setting. No login or IAM resources are
+changed automatically to overcome an access error. See [IAM setup](IAM_SETUP.md).
 
 1. Install project dependencies:
 
@@ -35,8 +46,8 @@ SSO users also need permission to assume the configured diagnostics role.
    passwords and MFA stay there. An existing browser session may be selectable.
    Attach AWS's `SignInLocalDevelopmentAccess` managed policy to the source identity
    for Console-to-CLI authorization. See [IAM setup](IAM_SETUP.md) for the source
-   permissions, role trust and permissions-boundary checks. Console EC2 access as
-   the source user is not required: the tool assumes the diagnostics role itself.
+   permissions, optional role trust and permissions-boundary checks. With role
+   access, source EC2 permissions are not required; with direct access they are.
 
    For **company SSO only**, configure the profile once on the server host:
 
@@ -52,11 +63,13 @@ SSO users also need permission to assume the configured diagnostics role.
    it is an example for your admin to review, not an automatically deployed policy.
 
 3. Register the MCP server with your agent. From an installed package, run
-   `aws-diagnostics-mcp setup --no-login --role-arn arn:aws:iam::123456789012:role/Diagnostics --config /actual/path/to/client-mcp.json`
+   `aws-diagnostics-mcp setup --no-login --config /actual/path/to/client-mcp.json`
    using the client's actual JSON MCP config path. For other formats, adapt the
    generated command, args and environment. The examples use the installed
    `aws-diagnostics-mcp serve` entry point; use its absolute path if needed.
    Set `AWS_DIAGNOSTICS_PROFILE` and `AWS_REGION` as needed.
+   Optionally add `--role-arn arn:aws:iam::123456789012:role/Diagnostics` for a
+   restricted role session, or `--access-mode role` to require that mode.
    A compatible client must support stdio MCP tools. Client-specific UI and config
    vary; individual named agents have not all been integration-tested.
 
@@ -107,7 +120,7 @@ Browser login lifetime and diagnostic role credential lifetime are separate:
 - Console login credentials are refreshed by the AWS CLI/SDK for up to 12 hours,
   subject to AWS limits. After the source login expires, browser approval is required
   again. Increasing the role duration does not extend this source login lifetime.
-- Each diagnostic tool operation assumes the diagnostics role again using the source
+- In role access mode, each diagnostic tool operation assumes the role using the source
   profile. Temporary role credentials last one hour by default. Their expiry between
   operations does not itself require browser approval. Credentials already issued to
   an individual operation are not refreshed mid-operation.
@@ -122,8 +135,9 @@ Browser login lifetime and diagnostic role credential lifetime are separate:
 
 The Console login flow does not support a days-long browser authorization. SSO
 session lifetime is controlled separately by the organization's administrator.
-This setting changes credential lifetime only; the diagnostic read-only session
-policy and root-identity rejection apply at every duration.
+The role-duration setting applies only to role access; direct access uses the source
+provider's own refresh and expiration. It does not change operation permissions or
+the requirement to explicitly opt in to root access.
 
 AWS references: [Console login and refresh](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html),
 [AssumeRole duration and chaining limits](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html).
@@ -177,12 +191,12 @@ Rule semantics: [security groups](https://docs.aws.amazon.com/vpc/latest/usergui
   session expires, another browser approval is required. Setup is one-time;
   permanent login is not promised. The SDK's CRT dependency is included for Console
   credential refresh. AWS CLI stores Console credentials in its login cache.
-- Root diagnostic sessions are blocked. A non-root profile and configured diagnostics
-  role are required. STS issues credentials with the intersection of the role permissions
-  and diagnostic session policy, including an explicit deny outside the read allowlist.
-  The source credentials remain in the AWS cache with their original permissions;
-  use a source profile limited to assuming the diagnostics role. No role or IAM policy
-  is automatically created or attached. Authentication writes the local profile/cache.
+- Role access uses STS credentials limited by the role permissions and diagnostic
+  session policy, including an explicit deny outside the read allowlist. Direct
+  access uses the source profile without an additional STS boundary. Source
+  credentials remain in the AWS cache with their original permissions in either
+  case. Root access requires explicit direct-mode opt-in. No role or IAM policy is
+  automatically created or attached. Authentication writes the local profile/cache.
 - One user/profile per stdio process. Use separate OS users and private AWS config
   and cache directories for different people. This is not a hosted multi-tenant
   service; do not expose stdio through an unauthenticated HTTP wrapper.
