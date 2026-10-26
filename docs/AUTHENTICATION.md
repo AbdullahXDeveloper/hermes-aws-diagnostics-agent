@@ -6,6 +6,11 @@ Requirements: Python 3.11+, AWS CLI v2.32+ and an existing AWS account. Non-root
 IAM Console login does not require IAM Identity Center. Company SSO remains supported.
 
 Diagnostics now require a non-root source profile plus `AWS_DIAGNOSTICS_ROLE_ARN`.
+The server checks the role setting before inspecting credentials. Missing or invalid
+role settings return `security_setup_required` with `missing_role_arn` or
+`invalid_role_arn`; a root source returns `root_identity`. Fix the indicated local
+configuration first rather than repeatedly requesting browser approval. The ARN
+must identify the IAM role, not an STS assumed-role session.
 Root browser login can complete, but diagnostic access is blocked. An administrator
 must create a diagnostics role with the example read permissions, trust the source
 IAM principal, and allow that principal `sts:AssumeRole` on the role. Pass the role
@@ -78,6 +83,14 @@ type. Existing profiles are not silently converted or switched to another identi
 - After either flow, call `connection_status` and resume the diagnosis. Reuse works
   across MCP restarts because AWS CLI persists the profile and credential cache.
   Session expiry requires another login, not another installation or SSO setup.
+
+The remote confirmation value is a complete Base64-encoded callback containing
+`code` and `state`. Copy the full value exactly as AWS displays it and pass it
+unchanged to `complete_aws_login` with the matching `login_id`. Do not decode it or
+extract the inner OAuth code; the AWS CLI performs that parsing and state validation.
+An encoded callback is the expected format, not a reason to reject the value.
+Terminal preview folding does not by itself mean that the underlying value is
+truncated. Submit one unbroken string without preview wrappers or inserted newlines.
 
 The remote authorization code is sensitive and single-use. Prefer private tool input
 if the client supports it; chat/tool history may retain submitted input. This server

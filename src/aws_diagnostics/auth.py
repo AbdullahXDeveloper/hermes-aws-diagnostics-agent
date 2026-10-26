@@ -14,7 +14,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from .bootstrap import find_aws
-from .policy import SESSION_POLICY
+from .policy import SESSION_POLICY, valid_role_arn
 
 CLIENT_CONFIG = Config(connect_timeout=5, read_timeout=15, retries={"max_attempts": 2})
 AUTH_ERRORS = {"ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId",
@@ -29,6 +29,16 @@ def error_result(error):
         return {"status": "security_setup_required", "message":
                 "Use a non-root AWS profile and set AWS_DIAGNOSTICS_ROLE_ARN to a trusted diagnostics role. "
                 "Diagnostics require an STS session restricted to diagnostic reads; no fallback is allowed."}
+    if code in {"DiagnosticsRoleMissing", "DiagnosticsRoleInvalid", "DiagnosticsRootIdentity"}:
+        reason, message = {
+            "DiagnosticsRoleMissing": ("missing_role_arn",
+                "AWS_DIAGNOSTICS_ROLE_ARN is missing. Set the existing diagnostics role ARN in this MCP installation using setup/configure --role-arn, then reload the MCP server. Browser login alone cannot configure the role."),
+            "DiagnosticsRoleInvalid": ("invalid_role_arn",
+                "AWS_DIAGNOSTICS_ROLE_ARN must be a complete IAM role ARN, not an STS assumed-role session ARN. Correct this MCP installation's configuration and reload the server."),
+            "DiagnosticsRootIdentity": ("root_identity",
+                "This source profile is logged in as root. Use a separate non-root IAM/SSO profile that can assume the configured diagnostics role."),
+        }[code]
+        return {"status": "security_setup_required", "reason": reason, "message": message}
     if code in AUTH_ERRORS or code in {
         "UnauthorizedSSOTokenError", "SSOTokenLoadError", "TokenRetrievalError",
         "NoCredentialsError", "PartialCredentialsError", "ProfileNotFound",
@@ -77,15 +87,18 @@ class Connection:
         atexit.register(self.close)
 
     def session(self, region=None):
+        # Report configuration errors before starting or examining a login session.
+        if not self.role_arn:
+            raise ClientError({"Error": {"Code": "DiagnosticsRoleMissing"}}, "AssumeRole")
+        if not valid_role_arn(self.role_arn):
+            raise ClientError({"Error": {"Code": "DiagnosticsRoleInvalid"}}, "AssumeRole")
         # Fresh session sees CLI login; the SDK refreshes SSO or console credentials.
         base = self.base_session(region)
         sts = base.client("sts", config=CLIENT_CONFIG)
         identity = sts.get_caller_identity()
-        role = self.role_arn
-        if identity["Arn"].endswith(":root") or not re.fullmatch(
-                r"arn:aws(?:-us-gov|-cn)?:iam::\d{12}:role/[\w+=,.@/-]+", role):
-            raise ClientError({"Error": {"Code": "DiagnosticsSecurityBoundary"}}, "AssumeRole")
-        credentials = sts.assume_role(RoleArn=role, RoleSessionName="aws-diagnostics",
+        if identity["Arn"].endswith(":root"):
+            raise ClientError({"Error": {"Code": "DiagnosticsRootIdentity"}}, "AssumeRole")
+        credentials = sts.assume_role(RoleArn=self.role_arn, RoleSessionName="aws-diagnostics",
             DurationSeconds=self.session_duration, Policy=json.dumps(SESSION_POLICY, separators=(",", ":")))["Credentials"]
         return boto3.Session(aws_access_key_id=credentials["AccessKeyId"],
             aws_secret_access_key=credentials["SecretAccessKey"],
@@ -200,7 +213,7 @@ class Connection:
                         self.login = {"status": "authorization_code_required" if remote else "login_required",
                                       "connect_url": url, "login_id": self.login_id,
                                       "message": "Open Connect AWS. " + (
-                                          "Return the one-time browser authorization code via complete_aws_login."
+                                          "Return the complete Base64 confirmation value copied from AWS via complete_aws_login, unchanged and without decoding."
                                           if remote else "Approve in this computer's browser, then call connection_status.")}
                 elif url and code:
                     parts = urlsplit(url)
@@ -228,7 +241,7 @@ class Connection:
     def complete(self, login_id, authorization_code):
         # CLI validates the code's OAuth state and exchanges it. Never echo or persist it here.
         if not re.fullmatch(r"[A-Za-z0-9+/=_-]{1,16384}", authorization_code):
-            return {"status": "invalid_input", "message": "Supply only the one-time authorization code shown by AWS."}
+            return {"status": "invalid_input", "message": "Supply the complete Base64 confirmation value copied from AWS as one unbroken string. Do not decode it, extract its inner code, or include preview wrappers."}
         with self.lock:
             if (not self.process or self.process.poll() is not None
                     or self.login.get("status") != "authorization_code_required"

@@ -46,6 +46,21 @@ def test_security_boundary_fails_closed(monkeypatch, principal, role):
     base.client.return_value.assume_role.assert_not_called()
 
 
+@pytest.mark.parametrize("role,reason", [("", "missing_role_arn"), ("invalid", "invalid_role_arn")])
+def test_role_configuration_error_precedes_login_and_aws_calls(monkeypatch, role, reason):
+    monkeypatch.setenv("AWS_DIAGNOSTICS_ROLE_ARN", role)
+    connection = Connection()
+    base = Mock(side_effect=AssertionError("Must not inspect credentials before role configuration"))
+    launch = Mock(side_effect=AssertionError("Must not start another login"))
+    monkeypatch.setattr(connection, "base_session", base)
+    monkeypatch.setattr("aws_diagnostics.auth.subprocess.Popen", launch)
+    result = connection.connect()
+    assert result["status"] == "security_setup_required"
+    assert result["reason"] == reason
+    base.assert_not_called()
+    launch.assert_not_called()
+
+
 @pytest.mark.parametrize("duration,expected", [(None, 3600), ("900", 900), ("7200", 7200), ("43200", 43200)])
 def test_only_restricted_role_credentials_reach_diagnostic_session(monkeypatch, duration, expected):
     monkeypatch.delenv("AWS_DIAGNOSTICS_SESSION_DURATION_SECONDS", raising=False)

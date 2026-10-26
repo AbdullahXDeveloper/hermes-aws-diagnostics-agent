@@ -54,6 +54,24 @@ def test_config_print_only(capsys):
     assert json.loads(capsys.readouterr().out)["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_REMOTE"] == "true"
 
 
+def test_configure_preserves_role_on_replacement_without_role_flag(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("AWS_DIAGNOSTICS_ROLE_ARN", raising=False)
+    role = "arn:aws:iam::123456789012:role/ExistingDiagnostics"
+    path = tmp_path / "agent.json"
+    write_configuration(path, configuration(role_arn=role))
+    assert main(["configure", "--config", str(path), "--region", "ap-south-1", "--replace"]) == 0
+    env = json.loads(path.read_text())["mcpServers"]["aws-diagnostics"]["env"]
+    assert env["AWS_DIAGNOSTICS_ROLE_ARN"] == role
+    assert env["AWS_REGION"] == "ap-south-1"
+
+
+def test_configuration_uses_explicit_role_before_environment(monkeypatch):
+    monkeypatch.setenv("AWS_DIAGNOSTICS_ROLE_ARN", "arn:aws:iam::123456789012:role/Environment")
+    explicit = "arn:aws:iam::123456789012:role/Explicit"
+    assert configuration()["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_ROLE_ARN"].endswith("/Environment")
+    assert configuration(role_arn=explicit)["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_ROLE_ARN"] == explicit
+
+
 def test_doctor_reports_missing_aws_without_logging_in(monkeypatch):
     monkeypatch.setattr("aws_diagnostics.cli.find_aws", lambda: None)
     launch = Mock()

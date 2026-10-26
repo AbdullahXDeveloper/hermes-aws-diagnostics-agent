@@ -12,6 +12,7 @@ def test_real_stdio_handshake_and_tool_call(arguments):
     async def run():
         parameters = StdioServerParameters(command=sys.executable,
             args=arguments, env={"AWS_DIAGNOSTICS_PROFILE": "nonexistent-test-profile",
+                                 "AWS_DIAGNOSTICS_ROLE_ARN": "arn:aws:iam::123456789012:role/Diagnostics",
                                  "PYTHONPATH": os.pathsep.join(sys.path)})
         async with stdio_client(parameters) as (reader, writer):
             async with ClientSession(reader, writer) as session:

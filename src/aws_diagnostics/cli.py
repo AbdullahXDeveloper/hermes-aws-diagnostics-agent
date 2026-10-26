@@ -12,9 +12,28 @@ import sys
 import tempfile
 
 from .bootstrap import find_aws, install_aws, login
+from .policy import valid_role_arn
+
+
+def resolve_role_arn(role_arn=None, config_path=None):
+    """Use an explicit role, process setting, or the existing client registration."""
+    role = role_arn if role_arn is not None else os.getenv("AWS_DIAGNOSTICS_ROLE_ARN")
+    if role is None and config_path is not None and config_path.exists():
+        if config_path.is_symlink():
+            raise ValueError("Refusing to edit a symlink. Use the actual config file path.")
+        data = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+            raise ValueError("Expected a JSON object with an mcpServers object. Client config format may differ.")
+        entry = data.get("mcpServers", {}).get("aws-diagnostics")
+        if isinstance(entry, dict) and isinstance(entry.get("env"), dict):
+            role = entry["env"].get("AWS_DIAGNOSTICS_ROLE_ARN")
+    if role and not valid_role_arn(role):
+        raise ValueError("--role-arn / AWS_DIAGNOSTICS_ROLE_ARN must be a complete IAM role ARN, not an STS session ARN")
+    return role or None
 
 
 def configuration(profile="diagnostics", region="us-east-1", auth_mode="auto", remote=False, role_arn=None):
+    role_arn = resolve_role_arn(role_arn)
     env = {"AWS_DIAGNOSTICS_PROFILE": profile, "AWS_REGION": region,
            "AWS_DIAGNOSTICS_AUTH_MODE": auth_mode}
     if remote:
@@ -65,7 +84,8 @@ def write_configuration(path, generated, replace=False):
             temporary.unlink()
     return {"status": "configured", "path": str(path),
             "backup": str(backup) if backup else None,
-            "next_step": "Reload your agent, then ask: Connect AWS."}
+            "next_step": ("Reload your agent, then ask: Connect AWS." if entry.get("env", {}).get("AWS_DIAGNOSTICS_ROLE_ARN") else
+                          "Configure an existing diagnostics role with --role-arn before connecting AWS; then reload the MCP server.")}
 
 
 def doctor(executable=None):
@@ -114,11 +134,16 @@ def main(argv=None):
         print(json.dumps(result, indent=2))
         return 0 if result["aws_cli"]["status"] == "ok" else 1
     try:
+        if args.config:
+            args.config = args.config.expanduser().absolute()
+        args.role_arn = resolve_role_arn(args.role_arn, args.config)
         if args.command == "setup":
             return run_setup(args)
         result = configuration(args.profile, args.region, args.auth_mode, args.remote, args.role_arn)
         if args.config:
             result = write_configuration(args.config, result, args.replace)
+        if not args.role_arn:
+            print("AWS diagnostics is not ready: configure an existing trusted role with --role-arn. This output is an incomplete configuration template.", file=sys.stderr)
         print(json.dumps(result, indent=2))
         return 0
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
@@ -155,17 +180,22 @@ def run_setup(args):
         raise ValueError("AWS CLI installation could not be verified. Check your installation and rerun setup.")
     executable = checks["aws_cli"]["path"]
     generated["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_AWS_CLI"] = executable
-    result = {"status": "ready", "aws_cli": checks["aws_cli"]}
+    result = {"status": "ready" if args.role_arn else "security_setup_required", "aws_cli": checks["aws_cli"]}
     result["configuration"] = (write_configuration(args.config, generated, replace)
                                if args.config else generated)
     result["login"] = {"status": "deferred", "message": "Reload your agent and ask Connect AWS."}
-    if not args.no_login:
+    if not args.role_arn:
+        result["login"] = {"status": "not_started", "message": "Configure an existing trusted diagnostics role with --role-arn before browser login."}
+        result["security"] = {"status": "security_setup_required", "reason": "missing_role_arn",
+                              "message": "Local installation is prepared, but AWS diagnostics cannot run without AWS_DIAGNOSTICS_ROLE_ARN. Rerun setup with --role-arn and the same client configuration path."}
+    elif not args.no_login:
         try:
             role_options = {"role_arn": args.role_arn} if args.role_arn else {}
             result["login"] = login(executable, args.profile, args.region, args.auth_mode, args.remote, **role_options)
         except (OSError, subprocess.TimeoutExpired):
             result["login"] = {"status": "login_failed", "message": "Retry Connect AWS from your agent."}
         if result["login"]["status"] != "connected":
-            result["status"] = "login_required"
+            result["status"] = (result["login"]["status"] if result["login"]["status"] in
+                                {"security_setup_required", "setup_required", "error"} else "login_required")
     print(json.dumps(result, indent=2))
     return 0 if result["status"] == "ready" else 1

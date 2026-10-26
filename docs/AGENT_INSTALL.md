@@ -72,12 +72,18 @@ work and selects the target instance.
    inspect conflicting settings before replacing them. Other JSON entries are
    preserved and an existing changed config is backed up.
 
-   Add `--role-arn` with the user's existing trusted diagnostics role ARN when
-   available. Diagnostics require a non-root source profile and restricted STS
+   Supply `--role-arn` with the user's existing trusted diagnostics role ARN, or
+   retain it from an existing registration / `AWS_DIAGNOSTICS_ROLE_ARN` environment
+   setting. Setup validates the ARN and preserves a configured role when the flag
+   is omitted. Diagnostics require a non-root source profile and restricted STS
    role session. If the role is not provisioned yet, finish local installation
    and report `security_setup_required`; do not create IAM resources or weaken
    the boundary as part of installation. The example read policy is for the
    account administrator to deploy.
+   Setup exits nonzero and does not launch login if the role is missing. A missing
+   local role setting does not prove that no role exists in AWS: ask for its ARN
+   before telling the user to create another one. Do not report AWS diagnostics as
+   connected merely because installation or host-terminal health checks succeeded.
    Follow [one-time IAM setup](IAM_SETUP.md) when the user explicitly requests IAM
    provisioning. Normal installation alone does not authorize creating IAM resources.
 

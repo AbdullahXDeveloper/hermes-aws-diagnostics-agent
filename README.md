@@ -45,6 +45,13 @@ verifies its version and writes MCP configuration. Other entries are preserved;
 changed files are backed up. Conflicting settings require `--replace`.
 Installation needs network access and permission to install software.
 
+`--role-arn` can also come from `AWS_DIAGNOSTICS_ROLE_ARN` or the existing client
+registration. Rerunning setup/configure preserves that registration's role when no
+replacement is supplied. Invalid role ARNs fail before installation or config writes.
+Without a role, setup may prepare the local installation but returns
+`security_setup_required` with a nonzero exit status and does not start browser login.
+Supply the existing role ARN and rerun setup; this does not create a role in AWS.
+
 - Add `--region ap-south-1` or your workload region; default is `us-east-1`.
 - Add `--remote` when the tool runs on a VPS.
 - Omit `--no-login` to sign in interactively from your terminal during setup.

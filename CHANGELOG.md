@@ -2,6 +2,11 @@
 
 ## 1.0.0
 
+- Prevent missing-role installations from reporting ready or starting browser login;
+  validate role ARNs before writes, preserve existing role settings during
+  setup/configure, and distinguish missing/invalid roles from root source profiles.
+- Clarify that remote Console login accepts AWS's complete Base64 confirmation
+  value unchanged; the CLI, not the agent, extracts the code and validates state.
 - Align package metadata and release instructions at 1.0.0, document non-root
   browser-login/IAM provisioning, and report boundary and role-session setup errors
   with actionable guidance without returning raw AWS error messages.

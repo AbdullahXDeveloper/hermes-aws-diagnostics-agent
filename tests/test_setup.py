@@ -15,6 +15,7 @@ def local_temp(monkeypatch, tmp_path):
 
 @pytest.fixture
 def ready(monkeypatch):
+    monkeypatch.setenv("AWS_DIAGNOSTICS_ROLE_ARN", "arn:aws:iam::123456789012:role/Diagnostics")
     check = {"aws_cli": {"status": "ok", "path": "/test/aws", "version": "aws-cli/2.38.5"}}
     monkeypatch.setattr(cli, "doctor", Mock(return_value=check))
     install = Mock(return_value="/test/aws")
@@ -83,7 +84,8 @@ def test_setup_rejects_conflicting_or_bad_config_before_install(ready, tmp_path,
 def test_setup_forwards_login_settings(ready, capsys):
     assert cli.main(["setup", "--profile", "company", "--region", "eu-west-1",
                      "--auth-mode", "sso", "--remote"]) == 0
-    ready[1].assert_called_once_with("/test/aws", "company", "eu-west-1", "sso", True)
+    ready[1].assert_called_once_with("/test/aws", "company", "eu-west-1", "sso", True,
+                                   role_arn="arn:aws:iam::123456789012:role/Diagnostics")
     assert json.loads(capsys.readouterr().out)["login"]["status"] == "connected"
 
 
@@ -93,6 +95,45 @@ def test_setup_retains_config_if_login_fails(ready, tmp_path, capsys):
     assert cli.main(["setup", "--config", str(path)]) == 1
     assert path.is_file()
     assert json.loads(capsys.readouterr().out)["status"] == "login_required"
+
+
+@pytest.mark.parametrize("extra", [[], ["--no-login"]])
+def test_missing_role_is_not_reported_ready_or_sent_to_login(ready, monkeypatch, tmp_path, capsys, extra):
+    monkeypatch.delenv("AWS_DIAGNOSTICS_ROLE_ARN", raising=False)
+    path = tmp_path / "agent.json"
+    assert cli.main(["setup", "--config", str(path), *extra]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "security_setup_required"
+    assert result["security"]["reason"] == "missing_role_arn"
+    assert result["login"]["status"] == "not_started"
+    assert path.is_file()
+    assert "--role-arn" in result["configuration"]["next_step"]
+    ready[1].assert_not_called()
+
+
+def test_setup_preserves_existing_role_when_flag_is_omitted(ready, monkeypatch, tmp_path, capsys):
+    role = "arn:aws:iam::123456789012:role/ExistingDiagnostics"
+    path = tmp_path / "agent.json"
+    path.write_text(json.dumps(cli.configuration(role_arn=role)))
+    monkeypatch.delenv("AWS_DIAGNOSTICS_ROLE_ARN", raising=False)
+    assert cli.main(["setup", "--no-login", "--config", str(path)]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "ready"
+    assert json.loads(path.read_text())["mcpServers"]["aws-diagnostics"]["env"]["AWS_DIAGNOSTICS_ROLE_ARN"] == role
+
+
+def test_invalid_role_rejected_before_install_login_or_config_write(ready, tmp_path):
+    path = tmp_path / "agent.json"
+    assert cli.main(["setup", "--role-arn", "arn:aws:sts::123456789012:assumed-role/Diagnostics/session",
+                     "--config", str(path)]) == 2
+    assert not path.exists()
+    ready[0].assert_not_called()
+    ready[1].assert_not_called()
+
+
+def test_setup_reports_security_error_without_requesting_another_login(ready, capsys):
+    ready[1].return_value = {"status": "security_setup_required", "reason": "root_identity"}
+    assert cli.main(["setup"]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "security_setup_required"
 
 
 @pytest.mark.parametrize("system,suffix", [("win32", "install.ps1"), ("linux", "install.sh"),

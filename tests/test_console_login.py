@@ -1,3 +1,4 @@
+import base64
 import io
 from unittest.mock import Mock
 
@@ -53,19 +54,21 @@ def test_console_url_needs_no_sso_code(remote):
     assert connection.login["status"] == "login_complete"
 
 
-def test_code_sent_once_without_echo():
+@pytest.mark.parametrize("authorization_code", ["sensitivecode",
+    base64.b64encode(b"code=test-code&state=test-state").decode("ascii")])
+def test_code_sent_once_without_echo(authorization_code):
     connection = Connection(auth_mode="console")
     process = Mock()
     process.poll.return_value = None
     connection.process = process
     connection.login = {"status": "authorization_code_required", "login_id": "current"}
-    assert connection.complete("old", "sensitivecode")["status"] == "not_found"
+    assert connection.complete("old", authorization_code)["status"] == "not_found"
     process.stdin.write.assert_not_called()
-    result = connection.complete("current", "sensitivecode")
+    result = connection.complete("current", authorization_code)
     assert result["status"] == "completing"
-    assert "sensitivecode" not in str(result) + str(connection.login)
-    process.stdin.write.assert_called_once_with("sensitivecode\n")
-    assert connection.complete("current", "sensitivecode")["status"] == "not_found"
+    assert authorization_code not in str(result) + str(connection.login)
+    process.stdin.write.assert_called_once_with(authorization_code + "\n")
+    assert connection.complete("current", authorization_code)["status"] == "not_found"
     connection.process = None
 
 
